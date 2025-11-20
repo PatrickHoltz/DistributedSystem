@@ -9,8 +9,8 @@ class TCPSocket(Thread):
     Send data to a server via TCP.
     '''
     def __init__(self, send_data):
+        super().__init__()
         self.send_data = send_data
-        pass
 
     def run(self):
         tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
