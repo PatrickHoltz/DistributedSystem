@@ -20,7 +20,7 @@ class TCPSocket(Thread):
 
         tcp_socket.connect((self.server_address, self.server_port))
 
-        send_bytes = json.dumps(asdict(self.send_data)).encode() + b"\n"
+        send_bytes = json.dumps(asdict(self.send_data)).encode("utf-8") + b"\n"
         tcp_socket.sendall(send_bytes)
 
         tcp_socket.close()
