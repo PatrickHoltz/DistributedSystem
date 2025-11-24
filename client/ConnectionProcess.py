@@ -99,7 +99,7 @@ class ConnectionProcess(mp.Process):
                         self._recv_queue.put(obj)
 
                 except socket.timeout:
-                    #kein neues pakket
+                    #kein neues paket
                     pass
 
         finally:
