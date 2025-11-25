@@ -5,6 +5,12 @@ from threading import Thread, Event
 class BroadcastListener(Thread):
     def __init__(self, port: int = 10002, on_message=None, buffer_size: int = 4096):
         super().__init__(daemon=True)
+
+        if on_message is None:
+            raise ValueError("on_message cant be null.")
+        if not callable(on_message):
+            raise TypeError("on_message must be callable.")
+
         self.port = port
         self.on_message = on_message
         self.buffer_size = buffer_size
@@ -35,10 +41,8 @@ class BroadcastListener(Thread):
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
-                if self.on_message:
-                    try:
-                        self.on_message(obj, addr)
-                    except Exception as e:
-                        print(f"Fehler im on_message: {e}")
+
+                self.on_message(obj, addr)
+
         finally:
             sock.close()
