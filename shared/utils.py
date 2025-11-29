@@ -17,3 +17,8 @@ class BossData:
 class GameState:
     players: list[PlayerData]
     boss_stats: BossData
+
+@dataclass
+class LoginData:
+    id: uuid
+    username: str
