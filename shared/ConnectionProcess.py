@@ -15,7 +15,7 @@ class ConnectionProcess(mp.Process):
         self.backlog = backlog
         self.buffer_size = buffer_size
 
-        #für jeden Typ, da ich ka habe was für typen wir schicken
+        # für jeden Typ, da ich ka habe was für typen wir schicken
         self._send_queue = mp.Queue()
         self._recv_queue = mp.Queue()
 
