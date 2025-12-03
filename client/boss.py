@@ -1,4 +1,4 @@
-from shared.dtos import *
+from shared.data import *
 
 class Boss:
     def __init__(self, boss_data: BossData):

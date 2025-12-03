@@ -1,4 +1,4 @@
-from shared.dtos import *
+from shared.data import *
 
 class Player:
     def __init__(self, game_state: GameState):
