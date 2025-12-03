@@ -1,8 +1,8 @@
-from shared.utils import *
+from shared.dtos import *
 
 class Boss:
-    def __init__(self, game_state: GameState):
-        self.game_state = game_state
+    def __init__(self, boss_data: BossData):
+        self.boss_data = boss_data
         pass
 
     def receive_damage(self):
@@ -14,4 +14,4 @@ class Boss:
         pass
 
     def get_boss_health(self):
-        return self.game_state.boss_stats.health
+        return self.boss_data.health

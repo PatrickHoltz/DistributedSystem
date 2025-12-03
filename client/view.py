@@ -30,7 +30,7 @@ class PlayerView:
 
 
 
-        self.boss_health_label = ctk.CTkLabel(root, text=f"Health: {self.boss.get_boss_health()}", command=self.__change_label_color)
+        self.boss_health_label = ctk.CTkLabel(root, text=f"Health: {self.boss.get_boss_health()}")
         self.boss_health_label.pack()
 
         root.bind("<space>", lambda event : self.__on_damage_input())

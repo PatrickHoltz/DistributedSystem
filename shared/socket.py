@@ -2,26 +2,26 @@ import socket
 import json
 from threading import Thread
 from dataclasses import asdict
+from shared.packet import Packet
 
 
 class TCPSocket(Thread):
     '''
     Send data to a server via TCP.
     '''
-    def __init__(self, send_data,server_address: str , server_port: int):
+    def __init__(self, packet: Packet,server_address: str , server_port: int):
         super().__init__()
-        self.send_data = send_data
+        self.packet = packet
         self.server_address = server_address
         self.server_port = server_port
 
     def run(self):
-        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-
+        print("Connecting to: ", (self.server_address, self.server_port))
         tcp_socket.connect((self.server_address, self.server_port))
 
-        send_bytes = json.dumps(asdict(self.send_data)).encode("utf-8") + b"\n"
-        tcp_socket.sendall(send_bytes)
+        tcp_socket.sendall(self.packet.encode())
 
         tcp_socket.close()
 
