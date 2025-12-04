@@ -20,5 +20,8 @@ class GameState:
 
 @dataclass
 class LoginData:
-    id: str
     username: str
+
+@dataclass
+class StringMessage:
+    message: str
