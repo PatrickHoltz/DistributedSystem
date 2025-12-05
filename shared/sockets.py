@@ -10,15 +10,24 @@ import struct
 import ipaddress
 import queue
 from typing import Optional, Tuple, Callable
+from enum import StrEnum
+
+class PacketTag(StrEnum):
+    NONE = "none"
+    LOGIN = "login"
+    GAMESTATE = "gamestate"
+    STRINGMESSAGE = "stringmessage"
+
 
 class Packet():
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, length: int = 0):
+    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, length: int = 0):
         """Content must be a dataclass"""
         self._content = content
         self._length = length
+        self._tag = tag
     
 
     def __to_dictionary(self) -> dict[str, object]:
@@ -26,6 +35,7 @@ class Packet():
         if not is_dataclass(self._content):
             raise "Could not encode package. Package content must be a dataclass."
         dictionary = dict()
+        dictionary['tag'] = self._tag.value
         dictionary['content'] = asdict(self._content)
         return dictionary
 
@@ -45,7 +55,7 @@ class Packet():
         """
         data_length = data[0:4]
         dictionary = json.loads(data[4:].decode())
-        return cls(dictionary['content'], data_length)
+        return cls(dictionary['content'], PacketTag(dictionary["tag"]), data_length)
 
 class UDPSocket(Thread):
     '''
@@ -112,7 +122,7 @@ class BroadcastSocket(Thread):
 class BroadcastListener(Thread):
     '''A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function.'''
 
-    def __init__(self, port: int = 10002, on_message: Callable[[dict, tuple[str, int]], Packet] = None, buffer_size: int = 65507):
+    def __init__(self, port: int = 10002, on_message: Callable[[Packet, tuple[str, int]], Packet] = None, buffer_size: int = 65507):
         super().__init__(daemon=True)
 
         if on_message is None:
@@ -148,7 +158,7 @@ class BroadcastListener(Thread):
 
                 try:
                     print("Broadcast message received")
-                    content = Packet.decode(data)._content
+                    content = Packet.decode(data)
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue

@@ -5,6 +5,7 @@ from boss import Boss
 import services
 import os
 from ctypes import windll
+from PIL import Image, ImageTk
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -33,6 +34,10 @@ class PlayerApp:
         root.resizable(False, False)
         scaleFactor = windll.shcore.GetScaleFactorForDevice(0) / 100
         root.tk.call('tk', 'scaling', scaleFactor)
+        favicon = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "Alien.ico"))
+        photo = ImageTk.PhotoImage(favicon)
+        root.iconphoto(True, photo)
+        #root.iconbitmap(photo)
 
         for Page in (LoginPage, GamePage):
             frame = Page(root, self)
@@ -100,7 +105,9 @@ class GamePage(ctk.CTkFrame):
             tk.PhotoImage(file=os.path.join(
                 BASE_DIR, "images", "Alien.png")),
             tk.PhotoImage(file=os.path.join(
-                BASE_DIR, "images", "AlienHit.png"))
+                BASE_DIR, "images", "AlienHit.png")),
+            tk.PhotoImage(file=os.path.join(
+                BASE_DIR, "images", "AlienDead.png"))
         ]
 
         # Background Canvas for displaying the images
@@ -111,7 +118,7 @@ class GamePage(ctk.CTkFrame):
             BASE_DIR, "images", "BackgroundCave.png"))
         self.canvas.create_image(0, 0, image=self.bg_img, anchor="nw")
         self.character = self.canvas.create_image(
-            0, 0, image=self.character_frames[0], anchor="nw")
+            0, 0, image=self.character_frames[0], anchor="nw", tag="character")
         self._update_health_bar(self.canvas)
 
         # Foreground elements
@@ -125,24 +132,25 @@ class GamePage(ctk.CTkFrame):
         players_label = ctk.CTkLabel(top_bar, text=f"Players: {1000}", font=("Lucida Sans", 16))
         players_label.pack(side="right", padx=10, pady=5)
 
-        self.boss_health_label = ctk.CTkLabel(top_bar, text="Alien", font=("Arial", 22, "bold"))
+        self.boss_health_label = ctk.CTkLabel(top_bar, text=self.app.boss.get_name(), font=("Arial", 22, "bold"))
         self.boss_health_label.place(relx=0.5, rely=0.5, anchor="center")
 
-        button = ctk.CTkButton(self, text="Attack!", bg_color="black",
+        # Attack button
+        self.attack_button = ctk.CTkButton(self, text="Attack!", bg_color="black",
                                corner_radius=0, command=self.__on_damage_input)
-        button.pack(side="bottom", pady = 20)
+        self.attack_button.pack(side="bottom", pady = 20)
 
         # Do not bind here. GamePage will bind/unbind when shown/hidden so
         # the space key only works while this frame is active.
 
     def _update_health_bar(self, canvas: tk.Canvas):
         canvas.delete("healthbar")
-        text_id = self.canvas.create_text(450,150, text=f"Health: {self.app.boss.get_boss_health()}", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
+        text_id = self.canvas.create_text(450,150, text=f"Health: {self.app.boss.get_health()}", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
         bbox = self.canvas.bbox(text_id)
         x1, y1, x2, y2 = bbox
         padx = 10
         pady = 5
-        health_percent = self.app.boss.get_boss_health() / self.app.boss.boss_data.max_health
+        health_percent = self.app.boss.get_health() / self.app.boss.get_max_health()
         health_rect_end = x1 - padx + health_percent * (x2 - x1 + 2* padx)
         bg_rect_id = self.canvas.create_rectangle(x1-padx, y1-pady, x2+padx, y2+pady, fill="red", tags="healthbar")
         health_rect_id = self.canvas.create_rectangle(x1-padx, y1-pady, health_rect_end, y2+pady, fill="green2", tags="healthbar")
@@ -169,21 +177,26 @@ class GamePage(ctk.CTkFrame):
             self.unbind("<space>")
 
     def __on_damage_input(self):
+        if self.app.boss.is_dead():
+            return
         print("Damage input")
         self.app.player.deal_damage()
         self.app.boss.receive_damage(10)
 
+        boss_dead = self.app.boss.is_dead()
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
         self.after(100, lambda: self.canvas.itemconfig(
-            self.character, image=self.character_frames[0]))
+            self.character, image=self.character_frames[2 if boss_dead else 0]), )
         
         # Update boss health label
         self._update_health_bar(self.canvas)
 
+        if self.app.boss.is_dead():
+            self.attack_button._state = "disabled"
+            self._show_defeated_text()
 
-    def __change_label_color(self):
-        if self.app.boss.get_boss_health() > 200:
-            self.boss_health_label.configure(text_color="green")
-        else:
-            self.boss_health_label.configure(text_color="red")
+    def _show_defeated_text(self):
+        self.canvas.create_text(304,204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black", tags="defeat_text")
+        self.canvas.create_text(300,200, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="white", tags="defeat_text")
+        self.canvas.create_text(300,260, text="Get ready for the next boss...", font=("Arial", 20, "bold"), fill="white", tags="defeat_text")
