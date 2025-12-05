@@ -182,3 +182,6 @@ cython_debug/
 
 # IDE settings:
 .idea
+
+# Custom
+client/images/untracked/*

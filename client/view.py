@@ -137,7 +137,7 @@ class GamePage(ctk.CTkFrame):
 
     def _update_health_bar(self, canvas: tk.Canvas):
         canvas.delete("healthbar")
-        text_id = self.canvas.create_text(450,150, text="Health: 100", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
+        text_id = self.canvas.create_text(450,150, text=f"Health: {self.app.boss.get_boss_health()}", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
         bbox = self.canvas.bbox(text_id)
         x1, y1, x2, y2 = bbox
         padx = 10
