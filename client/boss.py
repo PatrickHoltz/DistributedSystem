@@ -5,7 +5,11 @@ class Boss:
         self.boss_data = boss_data
         pass
 
-    def receive_damage(self):
+    def receive_damage(self, damage: int):
+        self.boss_data.health -= damage
+        if self.boss_data.health < 0:
+            self.boss_data.health = 0
+            print("Boss defeated!")
         #send damage to server
         pass
 

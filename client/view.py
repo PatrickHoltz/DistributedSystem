@@ -112,21 +112,44 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_image(0, 0, image=self.bg_img, anchor="nw")
         self.character = self.canvas.create_image(
             0, 0, image=self.character_frames[0], anchor="nw")
+        self._update_health_bar(self.canvas)
 
         # Foreground elements
-        level_label = ctk.CTkLabel(self, text=f"Level: {1}")
-        level_label.pack()
+        # Top bar with level and player count info
+        top_bar = ctk.CTkFrame(self, bg_color="transparent", fg_color="transparent", height=40)
+        top_bar.pack(fill='x')
 
-        self.boss_health_label = HealthBar(
-            self, text=f"Health: {app.boss.get_boss_health()}")
-        self.boss_health_label.pack(side="top", pady=10, anchor="n")
+        level_label = ctk.CTkLabel(top_bar, text=f"Level: {1}", font=("Lucida Sans", 16))
+        level_label.pack(side="left", padx=10, pady=5)
 
-        button = ctk.CTkButton(self, text="Attack!",
+        players_label = ctk.CTkLabel(top_bar, text=f"Players: {1000}", font=("Lucida Sans", 16))
+        players_label.pack(side="right", padx=10, pady=5)
+
+        self.boss_health_label = ctk.CTkLabel(top_bar, text="Alien", font=("Arial", 22, "bold"))
+        self.boss_health_label.place(relx=0.5, rely=0.5, anchor="center")
+
+        button = ctk.CTkButton(self, text="Attack!", bg_color="black",
                                corner_radius=0, command=self.__on_damage_input)
-        button.pack(side="bottom", pady = 30)
+        button.pack(side="bottom", pady = 20)
 
         # Do not bind here. GamePage will bind/unbind when shown/hidden so
         # the space key only works while this frame is active.
+
+    def _update_health_bar(self, canvas: tk.Canvas):
+        canvas.delete("healthbar")
+        text_id = self.canvas.create_text(450,150, text="Health: 100", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
+        bbox = self.canvas.bbox(text_id)
+        x1, y1, x2, y2 = bbox
+        padx = 10
+        pady = 5
+        health_percent = self.app.boss.get_boss_health() / self.app.boss.boss_data.max_health
+        health_rect_end = x1 - padx + health_percent * (x2 - x1 + 2* padx)
+        bg_rect_id = self.canvas.create_rectangle(x1-padx, y1-pady, x2+padx, y2+pady, fill="red", tags="healthbar")
+        health_rect_id = self.canvas.create_rectangle(x1-padx, y1-pady, health_rect_end, y2+pady, fill="green2", tags="healthbar")
+        border_rect_id = self.canvas.create_rectangle(x1-padx, y1-pady, x2+padx, y2+pady, width=4, tags="healthbar")
+
+        # Fix ordering
+        canvas.tag_raise(text_id, health_rect_id)
 
     def on_show(self):
         """Called when GamePage becomes visible. Bind the space key at root level."""
@@ -146,20 +169,21 @@ class GamePage(ctk.CTkFrame):
             self.unbind("<space>")
 
     def __on_damage_input(self):
+        print("Damage input")
         self.app.player.deal_damage()
+        self.app.boss.receive_damage(10)
+
+        # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
         self.after(100, lambda: self.canvas.itemconfig(
             self.character, image=self.character_frames[0]))
+        
+        # Update boss health label
+        self._update_health_bar(self.canvas)
 
-        print("Damage input")
 
     def __change_label_color(self):
         if self.app.boss.get_boss_health() > 200:
             self.boss_health_label.configure(text_color="green")
         else:
             self.boss_health_label.configure(text_color="red")
-
-
-class HealthBar(ctk.CTkLabel):
-    def __init__(self, master= None, text=""):
-        super().__init__(master, text=text, bg_color="transparent", fg_color="transparent", padx = 10, font=("Arial", 30, "bold"))

@@ -12,6 +12,7 @@ class PlayerData:
 class BossData:
     name: str
     health: int
+    max_health: int
 
 @dataclass
 class GameState:
