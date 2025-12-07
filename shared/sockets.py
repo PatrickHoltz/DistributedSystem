@@ -192,7 +192,7 @@ class TCPConnection(mp.Process):
         '''Provides a packet to be sent as soon as possible.'''
         self._send_queue.put(packet)
 
-    def get_message(self, timeout: Optional[float] = None):
+    def get_packet(self, timeout: Optional[float] = None):
         '''Blocks and waits for an incoming packet. A timeout can be provided to cancel after some time.'''
         try:
             return self._recv_queue.get(timeout=timeout)

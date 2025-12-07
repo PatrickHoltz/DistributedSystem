@@ -26,3 +26,7 @@ class LoginData:
 @dataclass
 class StringMessage:
     message: str
+
+@dataclass
+class AttackData:
+    damage: int

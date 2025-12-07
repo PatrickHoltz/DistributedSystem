@@ -137,13 +137,14 @@ class GamePage(ctk.CTkFrame):
 
         # Attack button
         self.attack_button = ctk.CTkButton(self, text="Attack!", bg_color="black",
-                               corner_radius=0, command=self.__on_damage_input)
+                               corner_radius=0, command=self._on_damage_input)
         self.attack_button.pack(side="bottom", pady = 20)
 
         # Do not bind here. GamePage will bind/unbind when shown/hidden so
         # the space key only works while this frame is active.
 
     def _update_health_bar(self, canvas: tk.Canvas):
+        """Destroys the old health bar and creates a new one based on the boss's current health."""
         canvas.delete("healthbar")
         text_id = self.canvas.create_text(450,150, text=f"Health: {self.app.boss.get_health()}", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
         bbox = self.canvas.bbox(text_id)
@@ -163,10 +164,10 @@ class GamePage(ctk.CTkFrame):
         """Called when GamePage becomes visible. Bind the space key at root level."""
         try:
             # bind at root so the event is handled regardless of widget focus
-            self.root.bind_all("<space>", lambda e: self.__on_damage_input())
+            self.root.bind_all("<space>", lambda e: self._on_damage_input())
         except Exception:
             # fallback to frame-local bind
-            self.bind("<space>", lambda e: self.__on_damage_input())
+            self.bind("<space>", lambda e: self._on_damage_input())
             self.focus_set()
 
     def on_hide(self):
@@ -176,7 +177,8 @@ class GamePage(ctk.CTkFrame):
         except Exception:
             self.unbind("<space>")
 
-    def __on_damage_input(self):
+    def _on_damage_input(self):
+        """Event callback for when the player inputs damage (presses space or clicks attack button)."""
         if self.app.boss.is_dead():
             return
         print("Damage input")

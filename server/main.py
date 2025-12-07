@@ -2,7 +2,6 @@ import socket
 import shared.data as data
 import shared.sockets as sockets
 
-
 def handle_login(packet: sockets.Packet, address: tuple[str, int]):
     if packet._tag == sockets.PacketTag.LOGIN:
         try:
@@ -14,7 +13,6 @@ def handle_login(packet: sockets.Packet, address: tuple[str, int]):
             # invalid data received
             pass
     return None
-
 
 login_listerner = sockets.BroadcastListener(on_message=handle_login)
 login_listerner.start()
