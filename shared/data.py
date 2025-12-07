@@ -1,23 +1,29 @@
-from uuid import uuid4 as uuid
 from dataclasses import dataclass
 
 @dataclass
 class PlayerData:
-    id: uuid
-    name: str
+    username: str
     damage: int
     level: int
+    online: bool
 
 @dataclass
 class BossData:
     name: str
+    stage: int
     health: int
     max_health: int
 
 @dataclass
 class GameState:
-    players: list[PlayerData]
-    boss_stats: BossData
+    players: dict[str, PlayerData]
+    boss: BossData
+
+@dataclass
+class GameStateUpdate:
+    boss: BossData
+    player: PlayerData
+    player_count: int
 
 @dataclass
 class LoginData:
@@ -29,4 +35,5 @@ class StringMessage:
 
 @dataclass
 class AttackData:
+    username: str
     damage: int

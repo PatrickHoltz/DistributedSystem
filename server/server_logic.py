@@ -2,44 +2,89 @@ from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener
 from shared.data import *
 import multiprocessing as mp
 from typing import TypeVar
-from threading import Thread
+from threading import Thread, Timer
 import time
 
 
 class GameStateManager:
     '''Manager of the overall game state.'''
-    def __init__(self):
-        pass
+    base_damage = 10
+
+    def __init__(self, server_loop: 'ServerLoop'):
+        self._game_state = GameState(players={}, boss=self._create_boss(1))
+        self._server_loop = server_loop
+
+    def _create_boss(self, stage: int) -> BossData:
+        health = stage * 100
+        return BossData(name=f"Alien{stage}", stage=stage, health=health, max_health=health)
+    
+    def apply_attack(self, username: str, damage: int):
+        if username in self._game_state.players:
+            self._game_state.boss.health -= damage
+            if self._game_state.boss.health < 0:
+                self._game_state.boss.health = 0
+                self._server_loop.multicast_packet(Packet(StringMessage("Boss dead"), tag=PacketTag.BOSS_DEAD))
+                Timer(3.0, self._advance_boss_stage).start()
+    
+    def _advance_boss_stage(self):
+        new_stage = self._game_state.boss.stage + 1
+        new_boss = self._create_boss(new_stage)
+        self._game_state.boss = new_boss
+        self._server_loop.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
+
+    def login_player(self, username: str):
+        '''Creates a new player entry if it does not exist and marks the player as online in all cases.'''
+        if username not in self._game_state.players:
+            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1, online=True)
+        else:
+            self._game_state.players[username].online = True
+    
+    def logout_player(self, username: str):
+        if username in self._game_state.players:
+            self._game_state.players[username].online = False
+
+    def get_state_update(self, username: str) -> GameStateUpdate:
+        return GameStateUpdate(
+            boss=self._game_state.boss,
+            player_count=self.get_online_player_count(),
+            player=self._game_state.players[username]
+        )
+    
+    def get_online_player_count(self) -> int:
+        online_players = [p for p in self._game_state.players.values() if p.online]
+        return len(online_players)
 
 
 class ConnectionManager:
     '''Maintains active client connections and handles new logins using a broadcast listener.'''
     def __init__(self, server_loop: 'ServerLoop'):
         self.active_connections: dict[str, ClientCommunicator] = {}
-        self.broadcast_listener = BroadcastListener(
+        self.login_listener = BroadcastListener(
             on_message=self.handle_login)
-        self.broadcast_listener.start()
+        self.login_listener.start()
         self.server_loop = server_loop
 
-    def add_connection(self, username: str, communicator: 'ClientCommunicator'):
+    def _add_connection(self, username: str, communicator: 'ClientCommunicator'):
+        '''Adds a new active connection and registers it in the game state manager.'''
         self.active_connections[username] = communicator
         communicator.start()
-        # TODO: register logged in player in game state manager
+        self.server_loop.game_state_manager.login_player(username)
 
-    def remove_connection(self, client_id: str):
-        if client_id in self.active_connections:
-            del self.active_connections[client_id]
-        # TODO: unregister logged in player in game state manager
+    def remove_connection(self, username: str):
+        '''Closes an active connection.'''
+        if username in self.active_connections:
+            self.active_connections[username].terminate()
+            del self.active_connections[username]
 
     def handle_login(self, packet: Packet, address: tuple[str, int]):
         if packet._tag == PacketTag.LOGIN:
             try:
                 login_data = LoginData(**packet._content)
                 print(f"Login registered: {login_data.username}")
-                self.add_connection(login_data.username,
+                self._add_connection(login_data.username,
                                     ClientCommunicator(address, self.server_loop))
-                response = Packet(StringMessage(
-                    f"Welcome back {login_data.username}!"))
+                game_state_update = self.server_loop.game_state_manager.get_state_update(login_data.username)
+                response = Packet(game_state_update, tag=PacketTag.GAMESTATEUPDATE)
                 return response
             except TypeError:
                 print("Invalid login data received.")
@@ -65,16 +110,35 @@ class ServerLoop(Thread):
     def start(self):
         while not self._is_stopped:
             self._process_incoming_messages()
+            self._update_game_states
             self._send_outgoing_messages()
             time.sleep(self.tick_rate)
+    
+    def multicast_packet(self, packet: Packet):
+        '''Writes a given packet into the outgoing queue for all connected clients.'''
+        for username in self.connection_manager.active_connections.keys():
+            self.out_queue.put((username, packet))
+
+    def _update_game_states(self):
+        '''Writes game state updates for all connected clients into the outgoing queue.'''
+        for username in self.connection_manager.active_connections.keys():
+            game_state_update = self.game_state_manager.get_state_update(username)
+            self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.GAMESTATEUPDATE)))
 
     def _process_incoming_messages(self):
         processed = 0
         while not self.in_queue.empty() and processed < self.MAX_MESSAGES_PER_TICK:
             username, packet = self.in_queue.get()
-            # TODO: process different packet types and change state accordingly
-            response = None
-            self.out_queue.put((username, response))
+            match packet._tag:
+                case PacketTag.ATTACK:
+                    self.game_state_manager.apply_attack(username, packet._content['damage'])
+                case PacketTag.LOGOUT:
+                    self.connection_manager.remove_connection(username)
+                    self.game_state_manager.logout_player(username)
+                case _:
+                    pass
+            # response = None
+            # self.out_queue.put((username, response))
             processed += 1
 
     def _send_outgoing_messages(self):
@@ -85,6 +149,7 @@ class ServerLoop(Thread):
                 communicator = self.connection_manager.active_connections[username]
                 communicator.send(packet)
             processed += 1
+    
 
 
 class ClientCommunicator(mp.Process):
@@ -93,9 +158,10 @@ class ClientCommunicator(mp.Process):
     '''
     T = TypeVar('T')
 
-    def __init__(self, address: tuple[str, int], server_loop: ServerLoop):
-        self.handlers = {}
+    def __init__(self, address: tuple[str, int], username: str, server_loop: ServerLoop):
         self.connection = TCPConnection(address)
+        self._username = username
+        self._server_loop = server_loop
         self._stop_event = mp.Event()
         self._recv_timeout = 2.0
 
@@ -105,41 +171,27 @@ class ClientCommunicator(mp.Process):
             # Wait for incoming packet
             packet = self.connection.get_packet(self._recv_timeout)
             if packet:
-                response = self._handle_packet(packet)
-                if response:
-                    self.connection.send(response)
-
-    def register_handler(self, packet_type, handler):
-        self.handlers[packet_type] = handler
+                self._handle_packet(packet)
 
     def _handle_packet(self, packet: Packet):
         try:
             match packet._tag:
                 case PacketTag.ATTACK:
+                    typed_packet = self._get_typed_packet(packet, AttackData)
                     self._handle_attack(packet)
                 case PacketTag.LOGOUT:
-                    self._handle_logout(packet)
+                    typed_packet = self._get_typed_packet(packet, LoginData)
                 case _:
-                    print(f"Unknown packet type received: {packet._tag}")
+                    raise ValueError(f"Unknown packet tag received: {packet._tag}")
+            self._server_loop.in_queue.put((self._username, typed_packet))
         except Exception as e:
             print("Error handling packet:", e)
 
-    def _get_packet_content(self, packet: Packet, content_type: T) -> T:
+    def _get_typed_packet(self, packet: Packet, content_type: T) -> Packet:
         # Validate packet content
         try:
-            return content_type(**packet._content)
+            content = content_type(**packet._content)
+            return Packet(content=content, tag=packet._tag)
         except TypeError:
             raise TypeError(
                 f"Could not extract packet content of type {content_type}")
-
-    def _handle_attack(self, packet: Packet):
-        # Process attack packet
-        attack_data = self._get_packet_content(packet, AttackData)
-        # access state
-
-        pass
-
-    def _handle_logout(self, packet: Packet):
-        # Process logout packet
-
-        pass

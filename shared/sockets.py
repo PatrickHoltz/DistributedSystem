@@ -15,8 +15,12 @@ from enum import StrEnum
 class PacketTag(StrEnum):
     NONE = "none"
     LOGIN = "login"
-    GAMESTATE = "gamestate"
+    LOGOUT = "logout"
+    ATTACK = "attack"
+    GAMESTATEUPDATE = "gamestateupdate"
     STRINGMESSAGE = "stringmessage"
+    NEW_BOSS = "new_boss"
+    BOSS_DEAD = "boss_dead"
 
 
 class Packet():
