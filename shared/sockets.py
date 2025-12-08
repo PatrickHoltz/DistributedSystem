@@ -17,7 +17,7 @@ class PacketTag(StrEnum):
     LOGIN = "login"
     LOGOUT = "logout"
     ATTACK = "attack"
-    GAMESTATEUPDATE = "gamestateupdate"
+    PLAYERGAMESTATE = "playergamestate"
     STRINGMESSAGE = "stringmessage"
     NEW_BOSS = "new_boss"
     BOSS_DEAD = "boss_dead"
@@ -86,7 +86,9 @@ class BroadcastSocket(Thread):
     def __init__(
         self,
         packet: Packet,
-        broadcast_port: int = 10002
+        response_handler: Callable[[Packet, tuple[str, int]], None] = None,
+        response_timeout_handler: Callable = None,
+        broadcast_port: int = 10002,
     ):
         super().__init__()
         self.send_packet = packet
@@ -94,10 +96,12 @@ class BroadcastSocket(Thread):
         self.broadcast_address = "" # here your local broadcast address should be entered
         self.future: Future[Packet] = Future()
         self.server_address: tuple[str, int] = None
+        self.response_handler = response_handler
+        self.response_timeout_handler = response_timeout_handler
 
     def run(self):
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
+        udp_socket.settimeout(5.0)
         udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         # für uns: wiederberwendung der Adresse
         # udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -105,14 +109,14 @@ class BroadcastSocket(Thread):
         bytes = self.send_packet.encode()
         udp_socket.sendto(bytes, (self.broadcast_address, self.broadcast_port))
 
-        data, self.server_address = udp_socket.recvfrom(4096)
-        received_packet: Packet = Packet.decode(data)
-        self.future.set_result(received_packet)
+        try:
+            data, self.server_address = udp_socket.recvfrom(4096)
+            received_packet: Packet = Packet.decode(data)
+            if self.response_handler:
+                self.response_handler(received_packet, self.server_address)
+        except socket.timeout:
+            self.response_timeout_handler()
         udp_socket.close()
-    
-    def get_response(self, timeout: int = 10) -> tuple[Packet, tuple[str, int]]:
-        packet = self.future.result(timeout)
-        return (packet, self.server_address)
 
     @classmethod
     def calculate_broadcast(cls, ip, mask):

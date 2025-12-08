@@ -43,8 +43,8 @@ class GameStateManager:
         if username in self._game_state.players:
             self._game_state.players[username].online = False
 
-    def get_state_update(self, username: str) -> GameStateUpdate:
-        return GameStateUpdate(
+    def get_state_update(self, username: str) -> PlayerGameState:
+        return PlayerGameState(
             boss=self._game_state.boss,
             player_count=self.get_online_player_count(),
             player=self._game_state.players[username]
@@ -84,7 +84,7 @@ class ConnectionManager:
                 self._add_connection(login_data.username,
                                     ClientCommunicator(address, self.server_loop))
                 game_state_update = self.server_loop.game_state_manager.get_state_update(login_data.username)
-                response = Packet(game_state_update, tag=PacketTag.GAMESTATEUPDATE)
+                response = Packet(game_state_update, tag=PacketTag.PLAYERGAMESTATE)
                 return response
             except TypeError:
                 print("Invalid login data received.")
@@ -123,7 +123,7 @@ class ServerLoop(Thread):
         '''Writes game state updates for all connected clients into the outgoing queue.'''
         for username in self.connection_manager.active_connections.keys():
             game_state_update = self.game_state_manager.get_state_update(username)
-            self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.GAMESTATEUPDATE)))
+            self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.PLAYERGAMESTATE)))
 
     def _process_incoming_messages(self):
         processed = 0

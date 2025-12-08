@@ -2,10 +2,11 @@ import customtkinter as ctk
 import tkinter as tk
 from player import Player
 from boss import Boss
-import services
+import client.controller as controller
 import os
 from ctypes import windll
 from PIL import Image, ImageTk
+from controller import GameController
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -16,11 +17,11 @@ class PlayerApp:
     UI class for the player. Allows a player to interact with the game.
     '''
 
-    def __init__(self, player: Player, boss: Boss):
-        self.player = player
-        self.boss = boss
+    def __init__(self, game_controller: GameController):
         self.frames: dict[type, ctk.CTkFrame] = {}
         self.__start()
+        self._game_controller = game_controller
+        game_controller.set_view(self)
 
     def __start(self):
         ctk.set_widget_scaling(1.0)
@@ -73,6 +74,8 @@ class LoginPage(ctk.CTkFrame):
     def __init__(self, master, app: PlayerApp, width=200, height=200, corner_radius=None, border_width=None, bg_color="transparent", fg_color=None, border_color=None, background_corner_colors=None, overwrite_preferred_drawing_method=None, **kwargs):
         super().__init__(master, width, height, corner_radius, border_width, bg_color, fg_color,
                          border_color, background_corner_colors, overwrite_preferred_drawing_method, **kwargs)
+        self.app = app
+
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
         center_frame.pack(expand=True)
 
@@ -89,7 +92,7 @@ class LoginPage(ctk.CTkFrame):
 
     def login(self):
         username = self.username_input.get()
-        services.login_service.login(username)
+        self.app._game_controller.login_service.login(username)
 
 
 class GamePage(ctk.CTkFrame):
