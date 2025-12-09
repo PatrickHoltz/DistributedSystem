@@ -174,11 +174,11 @@ class ClientCommunicator(mp.Process):
                 self._handle_packet(packet)
 
     def _handle_packet(self, packet: Packet):
+        '''Checks packet validity and provides the server loop with it.'''
         try:
             match packet._tag:
                 case PacketTag.ATTACK:
                     typed_packet = self._get_typed_packet(packet, AttackData)
-                    self._handle_attack(packet)
                 case PacketTag.LOGOUT:
                     typed_packet = self._get_typed_packet(packet, LoginData)
                 case _:

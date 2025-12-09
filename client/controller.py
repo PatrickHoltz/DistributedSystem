@@ -2,7 +2,7 @@ from shared.data import *
 from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPConnection
 import multiprocessing as mp
 from model import GameStateManager
-from view import PlayerApp
+import view
 
 
 class LoginService:
@@ -25,8 +25,7 @@ class LoginService:
         if packet._tag == PacketTag.PLAYERGAMESTATE:
             try:
                 game_state = PlayerGameState(**packet._content)
-                self._game_controller.on_login(self._username, address, game_state)
-                print("Login successful.")
+                self._game_controller.on_logged_in(self._username, address, game_state)
             except TypeError:
                 print("Invalid game state received.")
     
@@ -36,34 +35,38 @@ class LoginService:
 
 class ConnectionService(mp.Process):
 
-    def __init__(self, game_state_manager: GameStateManager):
+    def __init__(self, game_state_manager: GameStateManager, view: view.PlayerApp = None):
         self._game_state_manager = game_state_manager
+        self._view = view
         self._tcp_connection: TCPConnection = None
         self._username: str = None
-        self._stop_event = mp.Event()
+        self.stop_event = mp.Event()
 
     def start(self):
-        self.connection.start()
-        while not self._stop_event.is_set():
+        self._tcp_connection.start()
+        while not self.stop_event.is_set():
             # Wait for incoming packet
-            packet = self.connection.get_packet(self._recv_timeout)
+            packet = self._tcp_connection.get_packet(self._recv_timeout)
             if packet:
                 self._handle_packet(packet)
+        self._tcp_connection.terminate()
+    
     
     def _handle_packet(self, packet: Packet):
         try:
             match packet._tag:
                 case PacketTag.PLAYERGAMESTATE:
-                    typed_packet = self._get_typed_packet(packet, PlayerGameState)
-                    self._game_state_manager.update_game_state(typed_packet)
+                    typed_packet: Packet = self._get_typed_packet(packet, PlayerGameState)
+                    self._game_state_manager.update_game_state(typed_packet._content)
+                    self._view.on_update_game_page(self._game_state_manager)
                 case PacketTag.NEW_BOSS:
                     typed_packet = self._get_typed_packet(packet, BossData)
-                    self._handle_attack(packet)
-                case PacketTag.LOGOUT:
-                    typed_packet = self._get_typed_packet(packet, LoginData)
+                    self._game_state_manager.boss.update_state(typed_packet)
+                    self._view.on_update_game_page(self._game_state_manager)
                 case PacketTag.BOSS_DEAD:
                     typed_packet = self._get_typed_packet(packet, StringMessage)
-                    self._game_state_manager
+                    self._game_state_manager.boss.set_dead()
+                    self._view.on_update_game_page(self._game_state_manager)
                 case _:
                     raise ValueError(f"Unknown packet tag received: {packet._tag}")
             self._server_loop.in_queue.put((self._username, typed_packet))
@@ -75,34 +78,49 @@ class ConnectionService(mp.Process):
         if self._tcp_connection and self._username:
             attack_data = AttackData(username=self._username, damage=damage)
             packet = Packet(attack_data, tag=PacketTag.ATTACK)
-            self._tcp_connection.send_packet(packet)
+            self._tcp_connection.send(packet)
 
     def send_logout(self):
         '''Sends a logout packet to the server.'''
         if self._tcp_connection and self._username:
             logout_data = LoginData(self._username)
             packet = Packet(logout_data, tag=PacketTag.LOGOUT)
-            self._tcp_connection.send_packet(packet)
+            self._tcp_connection.send(packet)
             self._tcp_connection.terminate()
             self._tcp_connection = None
-            print("Logged out.")
+            print("You are logged out now.")
 
 class GameController:
     def __init__(self, game_state_manager: GameStateManager):
         self.game_state_manager = game_state_manager
         self.login_service = LoginService(self)
         self._connection_service: ConnectionService = None
-        self.player_app: PlayerApp = None
+        self.player_app: view.PlayerApp = None
     
-    def set_view(self, player_app: PlayerApp):
+    def set_view(self, player_app: view.PlayerApp):
         self.player_app = player_app
     
-    def on_login(self, username: str, address: tuple[str, int], game_state: PlayerGameState):
+    def on_logged_in(self, username: str, address: tuple[str, int], game_state: PlayerGameState):
         if self._connection_service:
-            self._connection_service.stop()
+            self._connection_service.stop_event.set()
+        print(f"You are now logged in as {username}")
         self._connection_service = ConnectionService(self.game_state_manager)
         self._connection_service.start()
         self.game_state_manager.update_game_state(game_state)
+        self.player_app.show_frame('GamePage')
+        self.player_app.on_update_game_page(game_state)
+
+    def on_attack(self):
+        damage = self.game_state_manager.player.damage
+        self.game_state_manager.attack_boss()
+        self._connection_service.send_attack(damage)
+        return self.game_state_manager.boss
+
+    def on_logout(self):
+        if self._connection_service:
+            self._connection_service.send_logout()
+        self.game_state_manager.player.logged_in = False
+        self.player_app.show_frame('LoginPage')
 
     def on_logout(self):
         pass

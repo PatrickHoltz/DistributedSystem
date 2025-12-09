@@ -1,7 +1,7 @@
 import view
-import shared.data as data
-import client.controller as client
+import controller
+import model
 
-game_manager = client.GameStateManager()
-login_service = client.ConnectionService(game_manager)
-view = view.PlayerApp(player, boss)
+state_manager = model.GameStateManager()
+game_controller = controller.GameController()
+player_app = view.PlayerApp(game_controller)
