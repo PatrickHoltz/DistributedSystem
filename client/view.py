@@ -1,12 +1,13 @@
+from __future__ import annotations
 import customtkinter as ctk
 import tkinter as tk
-import client.controller as controller
 import os
 from ctypes import windll
 from PIL import Image, ImageTk
-from controller import GameController
-from shared.data import PlayerGameState, BossData
 from model import Boss, GameStateManager
+from controller import GameController
+import events
+
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -20,8 +21,9 @@ class PlayerApp:
     def __init__(self, game_controller: GameController):
         self.frames: dict[type, ctk.CTkFrame] = {}
         self._game_controller = game_controller
-        game_controller.set_view(self)
         self.__start()
+        events.ON_LOGGED_IN.subscribe(self.on_logged_in)
+        events.UPDATE_GAME_STATE.subscribe(self.on_update_game_page)
 
     def __start(self):
         ctk.set_widget_scaling(1.0)
@@ -74,7 +76,10 @@ class PlayerApp:
         game_page: GamePage = self.frames[GamePage]
         game_page.update_frame(game_state)
     
-
+    def on_logged_in(self, game_state: GameStateManager):
+        self.show_frame(GamePage)
+        game_page: GamePage = self.frames[GamePage]
+        game_page.update_frame(game_state)
 
 
 class LoginPage(ctk.CTkFrame):
@@ -105,20 +110,23 @@ class LoginPage(ctk.CTkFrame):
 class GamePage(ctk.CTkFrame):
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    character_frames = [
-        tk.PhotoImage(file=os.path.join(
-            BASE_DIR, "images", "Alien.png")),
-        tk.PhotoImage(file=os.path.join(
-            BASE_DIR, "images", "AlienHit.png")),
-        tk.PhotoImage(file=os.path.join(
-            BASE_DIR, "images", "AlienDead.png"))
-        ]
+    
     
 
     def __init__(self, master, app: PlayerApp, width=200, height=200, corner_radius=None, border_width=None, bg_color="transparent", fg_color=None, border_color=None, background_corner_colors=None, overwrite_preferred_drawing_method=None, **kwargs):
         super().__init__(master, width, height, corner_radius, border_width, bg_color, fg_color,
                          border_color, background_corner_colors, overwrite_preferred_drawing_method, **kwargs)
         # keep a reference to the root/master so we can bind/unbind on show/hide
+        self.character_frames = [
+        tk.PhotoImage(file=os.path.join(
+            self.BASE_DIR, "images", "Alien.png")),
+        tk.PhotoImage(file=os.path.join(
+            self.BASE_DIR, "images", "AlienHit.png")),
+        tk.PhotoImage(file=os.path.join(
+            self.BASE_DIR, "images", "AlienDead.png"))
+        ]
+
+
         self.root = master
         self.app = app
         self.boss_defeated = False
@@ -209,7 +217,7 @@ class GamePage(ctk.CTkFrame):
         if self.boss_defeated:
             return
         print("Attack input received.")
-        boss: Boss = self.app._game_controller.on_attack()
+        boss: Boss = self.app._game_controller.attack_clicked()
         
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])

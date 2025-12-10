@@ -1,8 +1,9 @@
+from __future__ import annotations
 from shared.data import *
 from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPConnection
 import multiprocessing as mp
 from model import GameStateManager
-import view
+import events
 
 
 class LoginService:
@@ -35,9 +36,8 @@ class LoginService:
 
 class ConnectionService(mp.Process):
 
-    def __init__(self, game_state_manager: GameStateManager, view: view.PlayerApp = None):
+    def __init__(self, game_state_manager: GameStateManager):
         self._game_state_manager = game_state_manager
-        self._view = view
         self._tcp_connection: TCPConnection = None
         self._username: str = None
         self.stop_event = mp.Event()
@@ -58,15 +58,15 @@ class ConnectionService(mp.Process):
                 case PacketTag.PLAYERGAMESTATE:
                     typed_packet: Packet = self._get_typed_packet(packet, PlayerGameState)
                     self._game_state_manager.update_game_state(typed_packet._content)
-                    self._view.on_update_game_page(self._game_state_manager)
+                    events.UPDATE_GAME_STATE.trigger(typed_packet._content)
                 case PacketTag.NEW_BOSS:
                     typed_packet = self._get_typed_packet(packet, BossData)
                     self._game_state_manager.boss.update_state(typed_packet)
-                    self._view.on_update_game_page(self._game_state_manager)
+                    events.UPDATE_GAME_STATE.trigger(typed_packet._content)
                 case PacketTag.BOSS_DEAD:
                     typed_packet = self._get_typed_packet(packet, StringMessage)
                     self._game_state_manager.boss.set_dead()
-                    self._view.on_update_game_page(self._game_state_manager)
+                    events.UPDATE_GAME_STATE.trigger(typed_packet._content)
                 case _:
                     raise ValueError(f"Unknown packet tag received: {packet._tag}")
             self._server_loop.in_queue.put((self._username, typed_packet))
@@ -95,10 +95,6 @@ class GameController:
         self.game_state_manager = game_state_manager
         self.login_service = LoginService(self)
         self._connection_service: ConnectionService = None
-        self.player_app: view.PlayerApp = None
-    
-    def set_view(self, player_app: view.PlayerApp):
-        self.player_app = player_app
     
     def on_logged_in(self, username: str, address: tuple[str, int], game_state: PlayerGameState):
         if self._connection_service:
@@ -107,10 +103,9 @@ class GameController:
         self._connection_service = ConnectionService(self.game_state_manager)
         self._connection_service.start()
         self.game_state_manager.update_game_state(game_state)
-        self.player_app.show_frame('GamePage')
-        self.player_app.on_update_game_page(game_state)
+        events.ON_LOGGED_IN.trigger(game_state)
 
-    def on_attack(self):
+    def attack_clicked(self):
         damage = self.game_state_manager.player.damage
         self.game_state_manager.attack_boss()
         self._connection_service.send_attack(damage)
@@ -120,7 +115,5 @@ class GameController:
         if self._connection_service:
             self._connection_service.send_logout()
         self.game_state_manager.player.logged_in = False
+        events.ON_LOGGED_OUT.trigger()
         self.player_app.show_frame('LoginPage')
-
-    def on_logout(self):
-        pass
