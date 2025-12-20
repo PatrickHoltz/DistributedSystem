@@ -10,7 +10,7 @@ import struct
 import ipaddress
 import queue
 from typing import Optional, Tuple, Callable
-from enum import StrEnum, auto
+from enum import StrEnum
 
 
 class PacketTag(StrEnum):
