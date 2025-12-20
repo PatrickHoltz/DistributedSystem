@@ -22,8 +22,8 @@ class PacketTag(StrEnum):
     STRINGMESSAGE = "stringmessage"
     NEW_BOSS = "new_boss"
     BOSS_DEAD = "boss_dead"
-    Client_Ping = "client_ping"
-    Client_Pong = "client_pong"
+    CLIENT_PING = "client_ping"
+    CLIENT_PONG = "client_pong"
 
 
 class Packet():

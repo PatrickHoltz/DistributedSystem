@@ -55,12 +55,12 @@ class ConnectionService(mp.Process):
     def _handle_packet(self, packet: Packet):
         try:
             match packet._tag:
-                case PacketTag.Client_Ping:
-                    pong = Packet(StringMessage("pong"), tag=PacketTag.Client_Pong)
+                case PacketTag.CLIENT_PING:
+                    pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
                     self._tcp_connection.send(pong)
                     return
 
-                case PacketTag.Client_Pong:
+                case PacketTag.CLIENT_PONG:
                     return
 
                 case PacketTag.PLAYERGAMESTATE:

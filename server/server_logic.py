@@ -92,7 +92,7 @@ class ConnectionManager:
     def tick_client_heartbeat(self, now: float):
         if now >= self._next_client_ping:
             self._next_client_ping += self.CLIENT_HEARTBEAT_INTERVAL
-            self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.Client_Ping))
+            self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
 
         to_drop = []
         for username in list(self.active_connections.keys()):
@@ -168,11 +168,11 @@ class ServerLoop(Thread):
             self.connection_manager.mark_seen(username)
 
             match packet._tag:
-                case PacketTag.Client_Pong:
+                case PacketTag.CLIENT_PONG:
                     pass
 
-                case PacketTag.Client_Ping:
-                    self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.Client_Pong)))
+                case PacketTag.CLIENT_PING:
+                    self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
                     self.game_state_manager.apply_attack(username, packet._content['damage'])
@@ -226,7 +226,7 @@ class ClientCommunicator(mp.Process):
                 case PacketTag.LOGOUT:
                     typed_packet = self._get_typed_packet(packet, LoginData)
 
-                case PacketTag.Client_Pong | PacketTag.Client_Ping:
+                case PacketTag.CLIENT_PONG | PacketTag.CLIENT_PING:
                     typed_packet = self._get_typed_packet(packet, StringMessage)
 
                 case _:
