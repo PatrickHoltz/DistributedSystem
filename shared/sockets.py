@@ -10,7 +10,8 @@ import struct
 import ipaddress
 import queue
 from typing import Optional, Tuple, Callable
-from enum import StrEnum
+from enum import StrEnum, auto
+
 
 class PacketTag(StrEnum):
     NONE = "none"
@@ -21,6 +22,8 @@ class PacketTag(StrEnum):
     STRINGMESSAGE = "stringmessage"
     NEW_BOSS = "new_boss"
     BOSS_DEAD = "boss_dead"
+    Client_Ping = "client_ping"
+    Client_Pong = "client_pong"
 
 
 class Packet():
@@ -255,8 +258,8 @@ class TCPConnection(mp.Process):
                 try:
                     length_bytes = self._recv_exact(4, conn)
                     data_length = struct.unpack('!I', length_bytes)[0]
-                    data = self._recv_exact(data_length)
-                    packet = Packet.decode(data)
+                    json_bytes = self._recv_exact(data_length, conn)
+                    packet = Packet.decode(length_bytes + json_bytes)
                     self._recv_queue.put(packet)
                 except ConnectionError:
                     conn.close()

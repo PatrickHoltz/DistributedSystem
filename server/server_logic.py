@@ -57,16 +57,24 @@ class GameStateManager:
 
 class ConnectionManager:
     '''Maintains active client connections and handles new logins using a broadcast listener.'''
+    CLIENT_HEARTBEAT_TIMEOUT = 6.0
+    CLIENT_HEARTBEAT_INTERVAL = 2.0
+
     def __init__(self, server_loop: 'ServerLoop'):
         self.active_connections: dict[str, ClientCommunicator] = {}
+        self.last_seen: dict[str, float] = {}
+
         self.login_listener = BroadcastListener(
             on_message=self.handle_login)
         self.login_listener.start()
+
         self.server_loop = server_loop
+        self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
     def _add_connection(self, username: str, communicator: 'ClientCommunicator'):
         '''Adds a new active connection and registers it in the game state manager.'''
         self.active_connections[username] = communicator
+        self.last_seen[username] = time.monotonic()
         communicator.start()
         self.server_loop.game_state_manager.login_player(username)
 
@@ -75,6 +83,26 @@ class ConnectionManager:
         if username in self.active_connections:
             self.active_connections[username].terminate()
             del self.active_connections[username]
+        self.last_seen.pop(username, None)
+        self.server_loop.game_state_manager.logout_player(username)
+
+    def mark_seen(self, username: str):
+        self.last_seen[username] = time.monotonic()
+
+    def tick_client_heartbeat(self, now: float):
+        if now >= self._next_client_ping:
+            self._next_client_ping += self.CLIENT_HEARTBEAT_INTERVAL
+            self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.Client_Ping))
+
+        to_drop = []
+        for username in list(self.active_connections.keys()):
+            last = self.last_seen.get(username, 0.0)
+            if now - last > self.CLIENT_HEARTBEAT_TIMEOUT:
+                to_drop.append(username)
+
+        for username in to_drop:
+            print(f"Heartbeat timeout: {username}")
+            self.remove_connection(username)
 
     def handle_login(self, packet: Packet, address: tuple[str, int]):
         if packet._tag == PacketTag.LOGIN:
@@ -96,23 +124,29 @@ class ServerLoop(Thread):
     MAX_MESSAGES_PER_TICK = 50
 
     def __init__(self):
+        super().__init__()
         self.connection_manager = ConnectionManager(self)
-        self.game_state_manager = GameStateManager()
+        self.game_state_manager = GameStateManager(self)
 
         self._is_stopped = False
         self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.out_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.tick_rate = 0.1  # ticks per second
 
+    def run(self):
+        while not self._is_stopped:
+            now = time.monotonic()
+
+            self._process_incoming_messages()
+            self._update_game_states()
+            self._send_outgoing_messages()
+
+            self.connection_manager.tick_client_heartbeat(now)
+
+            time.sleep(self.tick_rate)
+
     def stop(self):
         self._is_stopped = True
-
-    def start(self):
-        while not self._is_stopped:
-            self._process_incoming_messages()
-            self._update_game_states
-            self._send_outgoing_messages()
-            time.sleep(self.tick_rate)
     
     def multicast_packet(self, packet: Packet):
         '''Writes a given packet into the outgoing queue for all connected clients.'''
@@ -129,7 +163,17 @@ class ServerLoop(Thread):
         processed = 0
         while not self.in_queue.empty() and processed < self.MAX_MESSAGES_PER_TICK:
             username, packet = self.in_queue.get()
+            processed += 1
+
+            self.connection_manager.mark_seen(username)
+
             match packet._tag:
+                case PacketTag.Client_Pong:
+                    pass
+
+                case PacketTag.Client_Ping:
+                    self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.Client_Pong)))
+
                 case PacketTag.ATTACK:
                     self.game_state_manager.apply_attack(username, packet._content['damage'])
                 case PacketTag.LOGOUT:
@@ -139,7 +183,6 @@ class ServerLoop(Thread):
                     pass
             # response = None
             # self.out_queue.put((username, response))
-            processed += 1
 
     def _send_outgoing_messages(self):
         processed = 0
@@ -179,8 +222,13 @@ class ClientCommunicator(mp.Process):
             match packet._tag:
                 case PacketTag.ATTACK:
                     typed_packet = self._get_typed_packet(packet, AttackData)
+
                 case PacketTag.LOGOUT:
                     typed_packet = self._get_typed_packet(packet, LoginData)
+
+                case PacketTag.Client_Pong | PacketTag.Client_Ping:
+                    typed_packet = self._get_typed_packet(packet, StringMessage)
+
                 case _:
                     raise ValueError(f"Unknown packet tag received: {packet._tag}")
             self._server_loop.in_queue.put((self._username, typed_packet))
