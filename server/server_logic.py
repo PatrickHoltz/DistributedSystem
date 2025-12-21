@@ -90,6 +90,10 @@ class ConnectionManager:
         self.last_seen[username] = time.monotonic()
 
     def tick_client_heartbeat(self, now: float):
+        '''
+        - Sends in an intervall ping message to all connected Clients
+        - Checks when the client was last seen (self.last_seen[username]) and removes connection if client didn't answer in CLIENT_HEARTBEAT_TIMEOUT time
+        '''
         if now >= self._next_client_ping:
             self._next_client_ping += self.CLIENT_HEARTBEAT_INTERVAL
             self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
@@ -176,6 +180,7 @@ class ServerLoop(Thread):
 
                 case PacketTag.ATTACK:
                     self.game_state_manager.apply_attack(username, packet._content['damage'])
+
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
                     self.game_state_manager.logout_player(username)
