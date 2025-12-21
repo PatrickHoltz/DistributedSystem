@@ -42,7 +42,7 @@ class ConnectionService(mp.Process):
         self._username: str = None
         self.stop_event = mp.Event()
 
-    def start(self):
+    def run(self):
         self._tcp_connection.start()
         while not self.stop_event.is_set():
             # Wait for incoming packet
@@ -55,14 +55,24 @@ class ConnectionService(mp.Process):
     def _handle_packet(self, packet: Packet):
         try:
             match packet._tag:
+                case PacketTag.CLIENT_PING:
+                    pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
+                    self._tcp_connection.send(pong)
+                    return
+
+                case PacketTag.CLIENT_PONG:
+                    return
+
                 case PacketTag.PLAYERGAMESTATE:
                     typed_packet: Packet = self._get_typed_packet(packet, PlayerGameState)
                     self._game_state_manager.update_game_state(typed_packet._content)
                     events.UPDATE_GAME_STATE.trigger(typed_packet._content)
+
                 case PacketTag.NEW_BOSS:
                     typed_packet = self._get_typed_packet(packet, BossData)
                     self._game_state_manager.boss.update_state(typed_packet)
                     events.UPDATE_GAME_STATE.trigger(typed_packet._content)
+
                 case PacketTag.BOSS_DEAD:
                     typed_packet = self._get_typed_packet(packet, StringMessage)
                     self._game_state_manager.boss.set_dead()
