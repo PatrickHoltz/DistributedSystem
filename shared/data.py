@@ -38,3 +38,7 @@ class StringMessage:
 class AttackData:
     username: str
     damage: int
+
+@dataclass
+class ServerHello:
+    uuid: str
