@@ -1,4 +1,5 @@
-from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener
+import uuid
+from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener, BroadcastSocket
 from shared.data import *
 import multiprocessing as mp
 from typing import TypeVar
@@ -129,6 +130,8 @@ class ServerLoop(Thread):
 
     def __init__(self):
         super().__init__()
+        self.server_uuid = str(uuid.uuid4())
+
         self.connection_manager = ConnectionManager(self)
         self.game_state_manager = GameStateManager(self)
 
@@ -138,6 +141,25 @@ class ServerLoop(Thread):
         self.tick_rate = 0.1  # ticks per second
 
     def run(self):
+        hello_packet = Packet(ServerHello(uuid=self.server_uuid), tag=PacketTag.SERVER_HELLO)
+
+        #sends 3 times because UDP can drop packages
+        broadcast_socket = None
+        for _ in range(3):
+            broadcast_socket = BroadcastSocket(
+                hello_packet,
+                response_handler=self.handle_leader_message,
+                broadcast_port=10002,
+                timeout_s= 1.0)
+            broadcast_socket.start()
+            time.sleep(0.2)
+
+        reply = broadcast_socket.future.result(timeout=2.0)
+        if reply is None:
+            print("No leader. My UUID", self.server_uuid)
+        else:
+            print("Answer received:", reply._tag, reply._content)
+
         while not self._is_stopped:
             now = time.monotonic()
 
@@ -197,6 +219,10 @@ class ServerLoop(Thread):
                 communicator = self.connection_manager.active_connections[username]
                 communicator.send(packet)
             processed += 1
+
+    def handle_leader_message(self, packet: Packet, address: tuple[str, int]):
+        '''TODO'''
+        pass
     
 
 
