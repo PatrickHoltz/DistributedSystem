@@ -58,3 +58,4 @@ class CoordinatorMessage:
 @dataclass
 class LeaderHeartbeat:
     leader_uuid: str
+

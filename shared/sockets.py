@@ -24,6 +24,7 @@ class PacketTag(StrEnum):
     BOSS_DEAD = "boss_dead"
     CLIENT_PING = "client_ping"
     CLIENT_PONG = "client_pong"
+    SERVER_HELLO = "server_hello"
 
     #Bully
     ELECTION = "election"
@@ -40,7 +41,7 @@ class Packet():
         self._content = content
         self._length = length
         self._tag = tag
-    
+
 
     def __to_dictionary(self) -> dict[str, object]:
 
@@ -91,40 +92,51 @@ class UDPSocket(Thread):
 
 class BroadcastSocket(Thread):
     '''Broadcasts a single packet to the specified broadcast address using a new socket. A response can be obtained.'''
+
+    BROADCAST_IP = "255.255.255.255"
     def __init__(
         self,
         packet: Packet,
         response_handler: Callable[[Packet, tuple[str, int]], None] = None,
         response_timeout_handler: Callable = None,
         broadcast_port: int = 10002,
+        timeout_s: float = 2.0
     ):
         super().__init__()
+        self.timeout_s = timeout_s
         self.send_packet = packet
         self.broadcast_port = broadcast_port
-        self.broadcast_address = "" # here your local broadcast address should be entered
-        self.future: Future[Packet] = Future()
+        self.broadcast_address = self.BROADCAST_IP
+        self.future: Future[Optional[Packet]] = Future()
         self.server_address: tuple[str, int] = None
         self.response_handler = response_handler
         self.response_timeout_handler = response_timeout_handler
 
     def run(self):
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_socket.settimeout(5.0)
-        udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        # für uns: wiederberwendung der Adresse
-        # udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        bytes = self.send_packet.encode()
-        udp_socket.sendto(bytes, (self.broadcast_address, self.broadcast_port))
-
         try:
-            data, self.server_address = udp_socket.recvfrom(4096)
-            received_packet: Packet = Packet.decode(data)
-            if self.response_handler:
-                self.response_handler(received_packet, self.server_address)
-        except socket.timeout:
-            self.response_timeout_handler()
-        udp_socket.close()
+            udp_socket.settimeout(self.timeout_s)
+            udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+
+            udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
+
+            try:
+                data, addr = udp_socket.recvfrom(4096)
+                received = Packet.decode(data)
+
+                if self.response_handler:
+                    self.response_handler(received, addr)
+
+                if not self.future.done():
+                    self.future.set_result(received)
+
+            except socket.timeout:
+                if self.response_timeout_handler:
+                    self.response_timeout_handler()
+                if not self.future.done():
+                    self.future.set_result(None)
+        finally:
+            udp_socket.close()
 
     @classmethod
     def calculate_broadcast(cls, ip, mask):
@@ -179,10 +191,10 @@ class BroadcastListener(Thread):
                     # ungültiges JSON ignorieren
                     continue
 
+                #on_message could respond with None if no leader
                 response_packet: Packet = self.on_message(content, addr)
-                response_data = response_packet.encode()
                 if response_packet:
-                    sock.sendto(response_data, addr)
+                    sock.sendto(response_packet.encode(), addr)
 
 
         finally:

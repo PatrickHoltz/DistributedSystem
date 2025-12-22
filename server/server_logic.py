@@ -1,6 +1,5 @@
 import uuid as _uuid
 from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener, BroadcastSocket
-from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener
 from shared.data import *
 import multiprocessing as mp
 from typing import TypeVar
@@ -141,6 +140,7 @@ class ServerLoop(Thread):
 
     def __init__(self):
         super().__init__()
+
         self.server_uuid = str(_uuid.uuid4())
 
         self.connection_manager = ConnectionManager(self)
@@ -167,6 +167,7 @@ class ServerLoop(Thread):
         hello_packet = Packet(ServerHello(uuid=self.server_uuid), tag=PacketTag.SERVER_HELLO)
 
         #sends 3 times because UDP can drop packages
+
         reply = None
         for _ in range(3):
             broadcast_socket = BroadcastSocket(
@@ -204,6 +205,7 @@ class ServerLoop(Thread):
             else:
                 print("I shouldn't get a replay -> start election")
                 self.start_election()
+
 
         while not self._is_stopped:
             now = time.monotonic()
