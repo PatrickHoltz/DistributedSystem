@@ -25,6 +25,11 @@ class PacketTag(StrEnum):
     CLIENT_PING = "client_ping"
     CLIENT_PONG = "client_pong"
 
+    #Bully
+    ELECTION = "election"
+    OK = "ok"
+    COORDINATOR = "coordinator"
+    LEADER_HEARTBEAT = "leader_heartbeat"
 
 class Packet():
     """Basic packet for client-server communication.
