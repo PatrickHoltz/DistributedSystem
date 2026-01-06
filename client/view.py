@@ -21,9 +21,10 @@ class PlayerApp:
     def __init__(self, game_controller: GameController):
         self.frames: dict[type, ctk.CTkFrame] = {}
         self._game_controller = game_controller
-        self.__start()
         events.ON_LOGGED_IN.subscribe(self.on_logged_in)
         events.UPDATE_GAME_STATE.subscribe(self.on_update_game_page)
+        
+        self.__start()
 
     def __start(self):
         ctk.set_widget_scaling(1.0)

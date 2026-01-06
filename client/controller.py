@@ -27,8 +27,8 @@ class LoginService:
 
         if packet._tag == PacketTag.PLAYERGAMESTATE:
             try:
-                game_state = PlayerGameState(**packet._content)
-                self._game_controller.on_logged_in(game_state.player["username"], address, game_state)
+                game_state = PlayerGameState.from_dict(packet._content)
+                self._game_controller.on_logged_in(game_state.player.username, address, game_state)
             except TypeError as e:
                 print("Invalid game state received.", e)
     
@@ -110,9 +110,9 @@ class GameController:
             self._connection_service.stop_event.set()
         print(f"You are now logged in as {username}")
         self._connection_service = ConnectionService(address, self.game_state_manager)
-        self._connection_service.start()
+        #self._connection_service.start()
         self.game_state_manager.update_game_state(game_state)
-        events.ON_LOGGED_IN.trigger(game_state)
+        events.ON_LOGGED_IN.trigger(self.game_state_manager)
 
     def attack_clicked(self):
         damage = self.game_state_manager.player.damage
