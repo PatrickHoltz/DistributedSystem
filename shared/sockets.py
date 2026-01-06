@@ -95,7 +95,7 @@ class BroadcastSocket(Thread):
         response_handler: Callable[[Packet, tuple[str, int]], None] = None,
         response_timeout_handler: Callable = None,
         broadcast_port: int = 10002,
-        timeout_s: float = 2.0
+        timeout_s: float = 10.0
     ):
         super().__init__()
         self.timeout_s = timeout_s
@@ -156,12 +156,15 @@ class BroadcastListener(Thread):
         self.port = port
         self.on_message = on_message
         self.buffer_size = buffer_size
+        self.blocked_ports = []
         self._stop_event = Event()
 
     def stop(self):
         self._stop_event.set()
 
     def run(self):
+        local_ip = self.get_local_ip()
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         #alle interfaces
@@ -172,6 +175,11 @@ class BroadcastListener(Thread):
             while not self._stop_event.is_set():
                 try:
                     data, addr = sock.recvfrom(self.buffer_size)
+
+                    if addr[1] in self.blocked_ports and addr[0] == local_ip:
+                        # Ignoriere Nachrichten von blockierten Ports (eigener Broadcast)
+                        continue
+
                 except socket.timeout:
                     # oft checken, ob wir stoppen sollen
                     continue
@@ -180,13 +188,13 @@ class BroadcastListener(Thread):
                     break
 
                 try:
-                    print("Broadcast message received")
+                    #print("Broadcast message received from ", addr)
                     content = Packet.decode(data)
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
 
-                #on_message could respond with None if no leader
+                # on_message could respond with None if no leader
                 response_packet: Packet = self.on_message(content, addr)
                 if response_packet:
                     sock.sendto(response_packet.encode(), addr)
@@ -195,6 +203,13 @@ class BroadcastListener(Thread):
         finally:
             sock.close()
 
+    @staticmethod
+    def get_local_ip():
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            # Connect to a dummy address (8.8.8.8) to trigger the OS 
+            # to pick the correct outgoing interface. No data is actually sent.
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
 
 class TCPConnection(mp.Process):
     '''A ongoing TCP connection which can be used for both sending and receiving packets.'''

@@ -14,42 +14,42 @@ class LoginService:
 
     def login(self, username: str):
         '''Sends a login broadcast and waits for a response to update the game state.'''
+
         print("Logging in...")
         login_data = LoginData(username)
-        packet = Packet(login_data)
+        packet = Packet(login_data, tag=PacketTag.LOGIN)
         login_broadcast = BroadcastSocket(packet, self._handle_login_response, self._handle_login_timeout)
         login_broadcast.start()
         login_broadcast.join()
 
     def _handle_login_response(self, packet: Packet, address: tuple[str, int]):
         '''Called when a login response is received. Updates the game state and starts a TCP connection with the responder.'''
+
         if packet._tag == PacketTag.PLAYERGAMESTATE:
             try:
                 game_state = PlayerGameState(**packet._content)
-                self._game_controller.on_logged_in(self._username, address, game_state)
-            except TypeError:
-                print("Invalid game state received.")
+                self._game_controller.on_logged_in(game_state.player["username"], address, game_state)
+            except TypeError as e:
+                print("Invalid game state received.", e)
     
     def _handle_login_timeout(self):
         print("Login failed. Server did not respond to login request.")
 
 
-class ConnectionService(mp.Process):
+class ConnectionService(TCPConnection):
 
-    def __init__(self, game_state_manager: GameStateManager):
+    def __init__(self, address: tuple[str, int], game_state_manager: GameStateManager):
+        super().__init__(address)
         self._game_state_manager = game_state_manager
-        self._tcp_connection: TCPConnection = None
         self._username: str = None
         self.stop_event = mp.Event()
 
     def run(self):
-        self._tcp_connection.start()
         while not self.stop_event.is_set():
             # Wait for incoming packet
-            packet = self._tcp_connection.get_packet(self._recv_timeout)
+            packet = self.get_packet(self._recv_timeout)
             if packet:
                 self._handle_packet(packet)
-        self._tcp_connection.terminate()
     
     
     def _handle_packet(self, packet: Packet):
@@ -57,7 +57,7 @@ class ConnectionService(mp.Process):
             match packet._tag:
                 case PacketTag.CLIENT_PING:
                     pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
-                    self._tcp_connection.send(pong)
+                    self.send(pong)
                     return
 
                 case PacketTag.CLIENT_PONG:
@@ -79,7 +79,7 @@ class ConnectionService(mp.Process):
                     events.UPDATE_GAME_STATE.trigger(typed_packet._content)
                 case _:
                     raise ValueError(f"Unknown packet tag received: {packet._tag}")
-            self._server_loop.in_queue.put((self._username, typed_packet))
+            
         except Exception as e:
             print("Error handling packet:", e)
 
@@ -88,16 +88,15 @@ class ConnectionService(mp.Process):
         if self._tcp_connection and self._username:
             attack_data = AttackData(username=self._username, damage=damage)
             packet = Packet(attack_data, tag=PacketTag.ATTACK)
-            self._tcp_connection.send(packet)
+            self.send(packet)
 
     def send_logout(self):
         '''Sends a logout packet to the server.'''
-        if self._tcp_connection and self._username:
+        if self._username:
             logout_data = LoginData(self._username)
             packet = Packet(logout_data, tag=PacketTag.LOGOUT)
-            self._tcp_connection.send(packet)
-            self._tcp_connection.terminate()
-            self._tcp_connection = None
+            self.send(packet)
+            self.terminate()
             print("You are logged out now.")
 
 class GameController:
@@ -110,7 +109,7 @@ class GameController:
         if self._connection_service:
             self._connection_service.stop_event.set()
         print(f"You are now logged in as {username}")
-        self._connection_service = ConnectionService(self.game_state_manager)
+        self._connection_service = ConnectionService(address, self.game_state_manager)
         self._connection_service.start()
         self.game_state_manager.update_game_state(game_state)
         events.ON_LOGGED_IN.trigger(game_state)

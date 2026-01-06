@@ -72,15 +72,19 @@ class ConnectionManager:
         self.server_loop = server_loop
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
-    def _add_connection(self, username: str, communicator: 'ClientCommunicator'):
+    def _add_connection(self, username: str, address: tuple[str, int]):
         '''Adds a new active connection and registers it in the game state manager.'''
+
+        self.server_loop.game_state_manager.login_player(username)
+
+        communicator = ClientCommunicator(address, username, self.server_loop.in_queue)
         self.active_connections[username] = communicator
         self.last_seen[username] = time.monotonic()
         communicator.start()
-        self.server_loop.game_state_manager.login_player(username)
 
     def remove_connection(self, username: str):
         '''Closes an active connection.'''
+
         if username in self.active_connections:
             self.active_connections[username].terminate()
             del self.active_connections[username]
@@ -110,21 +114,25 @@ class ConnectionManager:
             self.remove_connection(username)
 
     def handle_login(self, packet: Packet, address: tuple[str, int]):
+        '''Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None.'''
+
         if packet._tag == PacketTag.LOGIN:
             try:
                 login_data = LoginData(**packet._content)
                 print(f"Login registered: {login_data.username}")
-                self._add_connection(login_data.username,
-                                    ClientCommunicator(address, self.server_loop))
+
+                
+                self._add_connection(login_data.username, address)
                 game_state_update = self.server_loop.game_state_manager.get_state_update(login_data.username)
+
                 response = Packet(game_state_update, tag=PacketTag.PLAYERGAMESTATE)
                 return response
-            except TypeError:
-                print("Invalid login data received.")
+            except TypeError as e:
+                print("Invalid login data received.", e)
         return None
 
 
-class ServerLoop(Thread):
+class ServerLoop:
     '''Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick.'''
     MAX_MESSAGES_PER_TICK = 50
 
@@ -140,10 +148,12 @@ class ServerLoop(Thread):
         self.out_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.tick_rate = 0.1  # ticks per second
 
+        self.run()
+
     def run(self):
         hello_packet = Packet(ServerHello(uuid=self.server_uuid), tag=PacketTag.SERVER_HELLO)
 
-        #sends 3 times because UDP can drop packages
+        # sends 3 times because UDP can drop packages
         broadcast_socket = None
         for _ in range(3):
             broadcast_socket = BroadcastSocket(
@@ -167,7 +177,7 @@ class ServerLoop(Thread):
             self._update_game_states()
             self._send_outgoing_messages()
 
-            self.connection_manager.tick_client_heartbeat(now)
+            #self.connection_manager.tick_client_heartbeat(now)
 
             time.sleep(self.tick_rate)
 
@@ -226,24 +236,26 @@ class ServerLoop(Thread):
     
 
 
-class ClientCommunicator(mp.Process):
+class ClientCommunicator(TCPConnection):
     ''' Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
         Outgoing packets can be sent using the send method.
     '''
+
     T = TypeVar('T')
 
-    def __init__(self, address: tuple[str, int], username: str, server_loop: ServerLoop):
-        self.connection = TCPConnection(address)
+    def __init__(self, address: tuple[str, int], username: str, in_queue: mp.Queue):
+        """ClientCommunicator runs in its own process. Only pass picklable
+        objects into __init__ (primitives and multiprocessing queues)."""
+        super().__init__(address)
         self._username = username
-        self._server_loop = server_loop
+        self._in_queue = in_queue
         self._stop_event = mp.Event()
         self._recv_timeout = 2.0
 
     def run(self):
-        self.connection.start()
         while not self._stop_event.is_set():
             # Wait for incoming packet
-            packet = self.connection.get_packet(self._recv_timeout)
+            packet = self.get_packet(self._recv_timeout)
             if packet:
                 self._handle_packet(packet)
 
@@ -262,12 +274,16 @@ class ClientCommunicator(mp.Process):
 
                 case _:
                     raise ValueError(f"Unknown packet tag received: {packet._tag}")
-            self._server_loop.in_queue.put((self._username, typed_packet))
+            # Put the received, typed packet onto the shared in_queue so the
+            # main ServerLoop process can consume it.
+            self._in_queue.put((self._username, typed_packet))
+
         except Exception as e:
             print("Error handling packet:", e)
 
     def _get_typed_packet(self, packet: Packet, content_type: T) -> Packet:
         # Validate packet content
+
         try:
             content = content_type(**packet._content)
             return Packet(content=content, tag=packet._tag)
