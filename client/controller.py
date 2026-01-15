@@ -25,9 +25,9 @@ class LoginService:
     def _handle_login_response(self, packet: Packet, address: tuple[str, int]):
         '''Called when a login response is received. Updates the game state and starts a TCP connection with the responder.'''
 
-        if packet._tag == PacketTag.PLAYERGAMESTATE:
+        if packet.tag == PacketTag.PLAYER_GAME_STATE:
             try:
-                game_state = PlayerGameState.from_dict(packet._content)
+                game_state = PlayerGameState.from_dict(packet.content)
                 self._game_controller.on_logged_in(game_state.player.username, address, game_state)
             except TypeError as e:
                 print("Invalid game state received.", e)
@@ -54,7 +54,7 @@ class ConnectionService(TCPConnection):
     
     def _handle_packet(self, packet: Packet):
         try:
-            match packet._tag:
+            match packet.tag:
                 case PacketTag.CLIENT_PING:
                     pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
                     self.send(pong)
@@ -63,22 +63,22 @@ class ConnectionService(TCPConnection):
                 case PacketTag.CLIENT_PONG:
                     return
 
-                case PacketTag.PLAYERGAMESTATE:
+                case PacketTag.PLAYER_GAME_STATE:
                     typed_packet: Packet = self._get_typed_packet(packet, PlayerGameState)
-                    self._game_state_manager.update_game_state(typed_packet._content)
-                    events.UPDATE_GAME_STATE.trigger(typed_packet._content)
+                    self._game_state_manager.update_game_state(typed_packet.content)
+                    events.UPDATE_GAME_STATE.trigger(typed_packet.content)
 
                 case PacketTag.NEW_BOSS:
                     typed_packet = self._get_typed_packet(packet, BossData)
                     self._game_state_manager.boss.update_state(typed_packet)
-                    events.UPDATE_GAME_STATE.trigger(typed_packet._content)
+                    events.UPDATE_GAME_STATE.trigger(typed_packet.content)
 
                 case PacketTag.BOSS_DEAD:
                     typed_packet = self._get_typed_packet(packet, StringMessage)
                     self._game_state_manager.boss.set_dead()
-                    events.UPDATE_GAME_STATE.trigger(typed_packet._content)
+                    events.UPDATE_GAME_STATE.trigger(typed_packet.content)
                 case _:
-                    raise ValueError(f"Unknown packet tag received: {packet._tag}")
+                    raise ValueError(f"Unknown packet tag received: {packet.tag}")
             
         except Exception as e:
             print("Error handling packet:", e)

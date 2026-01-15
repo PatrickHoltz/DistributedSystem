@@ -14,13 +14,13 @@ windll.shcore.SetProcessDpiAwareness(1)
 
 
 class PlayerApp:
-    '''
+    """
     UI class for the player. Allows a player to interact with the game.
-    '''
+    """
 
     def __init__(self, game_controller: GameController):
         self.frames: dict[type, ctk.CTkFrame] = {}
-        self._game_controller = game_controller
+        self.game_controller = game_controller
         events.ON_LOGGED_IN.subscribe(self.on_logged_in)
         events.UPDATE_GAME_STATE.subscribe(self.on_update_game_page)
         
@@ -36,12 +36,10 @@ class PlayerApp:
         root.geometry("600x400")
         root.geometry(f"{600}x{400}")
         root.resizable(False, False)
-        scaleFactor = windll.shcore.GetScaleFactorForDevice(0) / 100
-        root.tk.call('tk', 'scaling', scaleFactor)
+
         favicon = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "Alien.ico"))
         photo = ImageTk.PhotoImage(favicon)
         root.iconphoto(True, photo)
-        #root.iconbitmap(photo)
 
         for Page in (LoginPage, GamePage):
             frame = Page(root, self)
@@ -51,7 +49,7 @@ class PlayerApp:
         self.show_frame(LoginPage)
         root.mainloop()
 
-    def show_frame(self, frame_to_show: ctk.CTkFrame):
+    def show_frame(self, frame_to_show: type[ctk.CTkFrame]):
         # call on_hide on previous frame if implemented
         try:
             if hasattr(self, "current_frame") and self.current_frame and hasattr(self.current_frame, "on_hide"):
@@ -73,7 +71,7 @@ class PlayerApp:
         self.current_frame = new_frame
     
     def on_update_game_page(self, game_state: GameStateManager):
-        '''Updates the GamePage with the latest game state.'''
+        """Updates the GamePage with the latest game state."""
         game_page: GamePage = self.frames[GamePage]
         game_page.update_frame(game_state)
     
@@ -105,7 +103,7 @@ class LoginPage(ctk.CTkFrame):
 
     def login(self):
         username = self.username_input.get()
-        self.app._game_controller.login_service.login(username)
+        self.app.game_controller.login_service.login(username)
 
 
 class GamePage(ctk.CTkFrame):
@@ -218,7 +216,7 @@ class GamePage(ctk.CTkFrame):
         if self.boss_defeated:
             return
         print("Attack input received.")
-        boss: Boss = self.app._game_controller.attack_clicked()
+        boss: Boss = self.app.game_controller.attack_clicked()
         
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])

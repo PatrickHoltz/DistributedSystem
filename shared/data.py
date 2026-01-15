@@ -27,7 +27,7 @@ class GameState:
 
 @dataclass
 class PlayerGameState:
-    '''Snapshot of the game state relevant to a specific player.'''
+    """Snapshot of the game state relevant to a specific player."""
     boss: BossData
     player: PlayerData
     player_count: int

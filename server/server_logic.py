@@ -3,12 +3,12 @@ from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener, 
 from shared.data import *
 import multiprocessing as mp
 from typing import TypeVar
-from threading import Thread, Timer
+from threading import Timer
 import time
 
 
 class GameStateManager:
-    '''Manager of the overall game state.'''
+    """Manager of the overall game state."""
     base_damage = 10
 
     def __init__(self, server_loop: 'ServerLoop'):
@@ -18,7 +18,7 @@ class GameStateManager:
     def _create_boss(self, stage: int) -> BossData:
         health = stage * 100
         return BossData(name=f"Alien{stage}", stage=stage, health=health, max_health=health)
-    
+
     def apply_attack(self, username: str, damage: int):
         if username in self._game_state.players:
             self._game_state.boss.health -= damage
@@ -34,7 +34,7 @@ class GameStateManager:
         self._server_loop.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
 
     def login_player(self, username: str):
-        '''Creates a new player entry if it does not exist and marks the player as online in all cases.'''
+        """Creates a new player entry if it does not exist and marks the player as online in all cases."""
         if username not in self._game_state.players:
             self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1, online=True)
         else:
@@ -57,7 +57,7 @@ class GameStateManager:
 
 
 class ConnectionManager:
-    '''Maintains active client connections and handles new logins using a broadcast listener.'''
+    """Maintains active client connections and handles new logins using a broadcast listener."""
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
@@ -73,7 +73,7 @@ class ConnectionManager:
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
     def _add_connection(self, username: str, address: tuple[str, int]):
-        '''Adds a new active connection and registers it in the game state manager.'''
+        """Adds a new active connection and registers it in the game state manager."""
 
         self.server_loop.game_state_manager.login_player(username)
 
@@ -83,7 +83,7 @@ class ConnectionManager:
         communicator.start()
 
     def remove_connection(self, username: str):
-        '''Closes an active connection.'''
+        """Closes an active connection."""
 
         if username in self.active_connections:
             self.active_connections[username].terminate()
@@ -95,10 +95,10 @@ class ConnectionManager:
         self.last_seen[username] = time.monotonic()
 
     def tick_client_heartbeat(self, now: float):
-        '''
-        - Sends in an intervall ping message to all connected Clients
+        """
+        - Sends in an interval ping message to all connected Clients
         - Checks when the client was last seen (self.last_seen[username]) and removes connection if client didn't answer in CLIENT_HEARTBEAT_TIMEOUT time
-        '''
+        """
         if now >= self._next_client_ping:
             self._next_client_ping += self.CLIENT_HEARTBEAT_INTERVAL
             self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
@@ -114,18 +114,18 @@ class ConnectionManager:
             self.remove_connection(username)
 
     def handle_login(self, packet: Packet, address: tuple[str, int]):
-        '''Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None.'''
+        """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
 
-        if packet._tag == PacketTag.LOGIN:
+        if packet.tag == PacketTag.LOGIN:
             try:
-                login_data = LoginData(**packet._content)
+                login_data = LoginData(**packet.content)
                 print(f"Login registered: {login_data.username}")
 
                 
                 self._add_connection(login_data.username, address)
                 game_state_update = self.server_loop.game_state_manager.get_state_update(login_data.username)
 
-                response = Packet(game_state_update, tag=PacketTag.PLAYERGAMESTATE)
+                response = Packet(game_state_update, tag=PacketTag.PLAYER_GAME_STATE)
                 return response
             except TypeError as e:
                 print("Invalid login data received.", e)
@@ -133,7 +133,7 @@ class ConnectionManager:
 
 
 class ServerLoop:
-    '''Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick.'''
+    """Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick."""
     MAX_MESSAGES_PER_TICK = 50
 
     def __init__(self):
@@ -168,7 +168,7 @@ class ServerLoop:
         if reply is None:
             print("No leader. My UUID", self.server_uuid)
         else:
-            print("Answer received:", reply._tag, reply._content)
+            print("Answer received:", reply.tag, reply.content)
 
         while not self._is_stopped:
             now = time.monotonic()
@@ -185,15 +185,15 @@ class ServerLoop:
         self._is_stopped = True
     
     def multicast_packet(self, packet: Packet):
-        '''Writes a given packet into the outgoing queue for all connected clients.'''
+        """Writes a given packet into the outgoing queue for all connected clients."""
         for username in self.connection_manager.active_connections.keys():
             self.out_queue.put((username, packet))
 
     def _update_game_states(self):
-        '''Writes game state updates for all connected clients into the outgoing queue.'''
+        """Writes game state updates for all connected clients into the outgoing queue."""
         for username in self.connection_manager.active_connections.keys():
             game_state_update = self.game_state_manager.get_state_update(username)
-            self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.PLAYERGAMESTATE)))
+            self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.PLAYER_GAME_STATE)))
 
     def _process_incoming_messages(self):
         processed = 0
@@ -203,7 +203,7 @@ class ServerLoop:
 
             self.connection_manager.mark_seen(username)
 
-            match packet._tag:
+            match packet.tag:
                 case PacketTag.CLIENT_PONG:
                     pass
 
@@ -211,7 +211,7 @@ class ServerLoop:
                     self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
-                    self.game_state_manager.apply_attack(username, packet._content['damage'])
+                    self.game_state_manager.apply_attack(username, packet.content['damage'])
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
@@ -231,20 +231,27 @@ class ServerLoop:
             processed += 1
 
     def handle_leader_message(self, packet: Packet, address: tuple[str, int]):
-        '''TODO'''
+        """TODO"""
         pass
     
 
 
 class ClientCommunicator(TCPConnection):
-    ''' Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
+    """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
         Outgoing packets can be sent using the send method.
-    '''
+    """
 
     T = TypeVar('T')
 
+    TAG_TO_DATA = {
+        PacketTag.ATTACK: AttackData,
+        PacketTag.LOGOUT: LoginData,
+        PacketTag.CLIENT_PONG: StringMessage,
+        PacketTag.CLIENT_PING: StringMessage,
+    }
+
     def __init__(self, address: tuple[str, int], username: str, in_queue: mp.Queue):
-        """ClientCommunicator runs in its own process. Only pass picklable
+        """ClientCommunicator runs in its own process. Only pass pickable
         objects into __init__ (primitives and multiprocessing queues)."""
         super().__init__(address)
         self._username = username
@@ -260,33 +267,23 @@ class ClientCommunicator(TCPConnection):
                 self._handle_packet(packet)
 
     def _handle_packet(self, packet: Packet):
-        '''Checks packet validity and provides the server loop with it.'''
-        try:
-            match packet._tag:
-                case PacketTag.ATTACK:
-                    typed_packet = self._get_typed_packet(packet, AttackData)
+        """Checks packet validity and provides the server loop with it."""
 
-                case PacketTag.LOGOUT:
-                    typed_packet = self._get_typed_packet(packet, LoginData)
+        data_class = self.TAG_TO_DATA.get(packet.tag)
+        if not data_class:
+            raise ValueError(f"Unknown packet tag received: {packet.tag}")
 
-                case PacketTag.CLIENT_PONG | PacketTag.CLIENT_PING:
-                    typed_packet = self._get_typed_packet(packet, StringMessage)
+        typed_packet = self._get_typed_packet(packet, data_class)
 
-                case _:
-                    raise ValueError(f"Unknown packet tag received: {packet._tag}")
-            # Put the received, typed packet onto the shared in_queue so the
-            # main ServerLoop process can consume it.
-            self._in_queue.put((self._username, typed_packet))
-
-        except Exception as e:
-            print("Error handling packet:", e)
+        # Put the received, typed packet onto the shared in_queue so the
+        # main ServerLoop process can consume it.
+        self._in_queue.put((self._username, typed_packet))
 
     def _get_typed_packet(self, packet: Packet, content_type: T) -> Packet:
         # Validate packet content
-
         try:
-            content = content_type(**packet._content)
-            return Packet(content=content, tag=packet._tag)
+            content = content_type(**packet.content)
+            return Packet(content=content, tag=packet.tag)
         except TypeError:
             raise TypeError(
                 f"Could not extract packet content of type {content_type}")

@@ -1,4 +1,4 @@
-'''This module contains classes for sending packets in different forms.'''
+"""This module contains classes for sending packets in different forms."""
 
 import socket
 from threading import Thread, Event
@@ -7,7 +7,6 @@ from concurrent.futures import Future
 import json
 from dataclasses import asdict, is_dataclass
 import struct
-import ipaddress
 import queue
 from typing import Optional, Tuple, Callable
 from enum import StrEnum
@@ -18,8 +17,8 @@ class PacketTag(StrEnum):
     LOGIN = "login"
     LOGOUT = "logout"
     ATTACK = "attack"
-    PLAYERGAMESTATE = "playergamestate"
-    STRINGMESSAGE = "stringmessage"
+    PLAYER_GAME_STATE = "player_game_state"
+    STRING_MESSAGE = "string_message"
     NEW_BOSS = "new_boss"
     BOSS_DEAD = "boss_dead"
     CLIENT_PING = "client_ping"
@@ -27,30 +26,28 @@ class PacketTag(StrEnum):
     SERVER_HELLO = "server_hello"
 
 
-class Packet():
+class Packet:
     """Basic packet for client-server communication.
     """
 
     def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, length: int = 0):
         """Content must be a dataclass"""
-        self._content = content
+        self.content = content
         self._length = length
-        self._tag = tag
+        self.tag = tag
 
-
-    def __to_dictionary(self) -> dict[str, object]:
-
-        if not is_dataclass(self._content):
+    def _to_dictionary(self) -> dict[str, object]:
+        if not is_dataclass(self.content):
             raise "Could not encode package. Package content must be a dataclass."
         dictionary = dict()
-        dictionary['tag'] = self._tag.value
-        dictionary['content'] = asdict(self._content)
+        dictionary['tag'] = self.tag.value
+        dictionary['content'] = asdict(self.content)
         return dictionary
 
     def encode(self) -> bytes:
         """Encodes a packet to a byte array ready to send. The returned bytes start with a 4 byte data length.
         """
-        json_string = json.dumps(self.__to_dictionary())
+        json_string = json.dumps(self._to_dictionary())
         json_bytes = json_string.encode()
 
         # prepend the data length as a 4-byte integer
@@ -61,15 +58,17 @@ class Packet():
     def decode(cls, data: bytes) -> 'Packet':
         """Decodes a byte array into a packet ready to use. The content is kept as a dictionary.
         """
-        data_length = data[0:4]
+        data_length = int.from_bytes(data[0:4])
         dictionary = json.loads(data[4:].decode())
         return cls(dictionary['content'], PacketTag(dictionary["tag"]), data_length)
 
+
 class UDPSocket(Thread):
-    '''
+    """
     Send data to a server via UDP.
-    '''
-    def __init__(self, packet: Packet,server_address: str , server_port: int):
+    """
+
+    def __init__(self, packet: Packet, server_address: str, server_port: int):
         super().__init__()
         self.packet = packet
         self.server_address = server_address
@@ -85,17 +84,19 @@ class UDPSocket(Thread):
 
         udp_socket.close()
 
+
 class BroadcastSocket(Thread):
-    '''Broadcasts a single packet to the specified broadcast address using a new socket. A response can be obtained.'''
+    """Broadcasts a single packet to the specified broadcast address using a new socket. A response can be obtained."""
 
     BROADCAST_IP = "255.255.255.255"
+
     def __init__(
-        self,
-        packet: Packet,
-        response_handler: Callable[[Packet, tuple[str, int]], None] = None,
-        response_timeout_handler: Callable = None,
-        broadcast_port: int = 10002,
-        timeout_s: float = 10.0
+            self,
+            packet: Packet,
+            response_handler: Callable[[Packet, tuple[str, int]], None] = None,
+            response_timeout_handler: Callable = None,
+            broadcast_port: int = 10002,
+            timeout_s: float = 10.0
     ):
         super().__init__()
         self.timeout_s = timeout_s
@@ -103,7 +104,6 @@ class BroadcastSocket(Thread):
         self.broadcast_port = broadcast_port
         self.broadcast_address = self.BROADCAST_IP
         self.future: Future[Optional[Packet]] = Future()
-        self.server_address: tuple[str, int] = None
         self.response_handler = response_handler
         self.response_timeout_handler = response_timeout_handler
 
@@ -135,7 +135,6 @@ class BroadcastSocket(Thread):
 
     @classmethod
     def calculate_broadcast(cls, ip, mask):
-        ipaddress.ip_network
         ip_int = struct.unpack("!I", socket.inet_aton(ip))[0]
         mask_int = struct.unpack("!I", socket.inet_aton(mask))[0]
         broadcast_int = ip_int | (~mask_int & 0xFFFFFFFF)
@@ -143,9 +142,10 @@ class BroadcastSocket(Thread):
 
 
 class BroadcastListener(Thread):
-    '''A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function.'''
+    """A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function."""
 
-    def __init__(self, port: int = 10002, on_message: Callable[[Packet, tuple[str, int]], Packet] = None, buffer_size: int = 65507):
+    def __init__(self, port: int = 10002, on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
+                 buffer_size: int = 65507):
         super().__init__(daemon=True)
 
         if on_message is None:
@@ -167,9 +167,9 @@ class BroadcastListener(Thread):
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        #alle interfaces
+        # alle interfaces
         sock.bind(("", self.port))
-        #Timeout, damit recvfrom nicht unendlich blockiert
+        # Timeout, damit recvfrom nicht unendlich blockiert
         sock.settimeout(5.0)
         try:
             while not self._stop_event.is_set():
@@ -188,7 +188,7 @@ class BroadcastListener(Thread):
                     break
 
                 try:
-                    #print("Broadcast message received from ", addr)
+                    # print("Broadcast message received from ", addr)
                     content = Packet.decode(data)
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
@@ -211,8 +211,9 @@ class BroadcastListener(Thread):
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
 
+
 class TCPConnection(mp.Process):
-    '''A ongoing TCP connection which can be used for both sending and receiving packets.'''
+    """An ongoing TCP connection which can be used for both sending and receiving packets."""
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
     def __init__(self, address: Tuple[str, int], backlog: int = 1, buffer_size: int = 4096):
@@ -227,11 +228,11 @@ class TCPConnection(mp.Process):
         self._stop_event = mp.Event()
 
     def send(self, packet: Packet):
-        '''Provides a packet to be sent as soon as possible.'''
+        """Provides a packet to be sent as soon as possible."""
         self._send_queue.put(packet)
 
     def get_packet(self, timeout: Optional[float] = None):
-        '''Blocks and waits for an incoming packet. A timeout can be provided to cancel after some time.'''
+        """Blocks and waits for an incoming packet. A timeout can be provided to cancel after some time."""
         try:
             return self._recv_queue.get(timeout=timeout)
         except queue.Empty:
@@ -240,7 +241,7 @@ class TCPConnection(mp.Process):
     def stop(self):
         self._stop_event.set()
 
-    def _recv_exact(self, n_bytes: int, conn: socket):
+    def _recv_exact(self, n_bytes: int, conn: socket.socket):
         data = b""
         while len(data) < n_bytes:
             chunk = conn.recv(n_bytes - len(data))
@@ -249,7 +250,6 @@ class TCPConnection(mp.Process):
                 raise ConnectionError("connection closed")
             data += chunk
         return data
-
 
     def run(self):
 
@@ -292,7 +292,7 @@ class TCPConnection(mp.Process):
                     conn.close()
                     conn = None
                 except socket.timeout:
-                    #kein neues paket
+                    # kein neues paket
                     pass
 
         finally:
