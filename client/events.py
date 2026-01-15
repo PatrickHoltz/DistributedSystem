@@ -1,20 +1,36 @@
-class Event:
-    def __init__(self):
-        self._subscribers = []
+import queue
+from enum import StrEnum
 
-    def subscribe(self, callback):
-        """Register a function to be called when event is triggered."""
-        self._subscribers.append(callback)
 
-    def unsubscribe(self, callback):
-        """Remove a subscribed function."""
-        self._subscribers.remove(callback)
+class UIEventDispatcher:
+    def __init__(self, root):
+        self._queue = queue.Queue()
+        self._root = root
+        self._subscribers = {}
 
-    def trigger(self, *args, **kwargs):
-        """Call all subscribers with given arguments."""
-        for callback in self._subscribers:
-            callback(*args, **kwargs)
+    def subscribe(self, event_name, callback):
+        self._subscribers.setdefault(event_name, []).append(callback)
 
-UPDATE_GAME_STATE = Event()
-ON_LOGGED_IN = Event()
-ON_LOGGED_OUT = Event()
+    def emit(self, event_name, *args, **kwargs):
+        self._queue.put((event_name, args, kwargs))
+
+    def start(self):
+        self._root.after(20, self._process)
+
+    def _process(self):
+        try:
+            while True:
+                event_name, args, kwargs = self._queue.get_nowait()
+                for cb in self._subscribers.get(event_name, []):
+                    cb(*args, **kwargs)
+        except queue.Empty:
+            pass
+
+        self._root.after(20, self._process)
+
+class Events(StrEnum):
+    UPDATE_GAME_STATE = "update_game_state"
+    LOGGED_IN = "logged_in"
+    LOGGED_OUT = "logged_out"
+    LOGIN_CLICKED = "log_in_clicked"
+    ATTACK_CLICKED = "attack_clicked"

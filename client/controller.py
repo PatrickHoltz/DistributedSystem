@@ -1,8 +1,10 @@
 from __future__ import annotations
+
+from client.events import UIEventDispatcher, Events
 from shared.data import *
 from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPConnection
 import multiprocessing as mp
-from model import GameStateManager
+from model import ClientGameState
 import events
 
 
@@ -11,6 +13,7 @@ class LoginService:
 
     def __init__(self, game_controller: 'GameController'):
         self._game_controller = game_controller
+        self._game_controller.dispatcher.subscribe(Events.LOGIN_CLICKED, self.login)
 
     def login(self, username: str):
         '''Sends a login broadcast and waits for a response to update the game state.'''
@@ -27,7 +30,7 @@ class LoginService:
 
         if packet.tag == PacketTag.PLAYER_GAME_STATE:
             try:
-                game_state = PlayerGameState.from_dict(packet.content)
+                game_state = PlayerGameStateData.from_dict(packet.content)
                 self._game_controller.on_logged_in(game_state.player.username, address, game_state)
             except TypeError as e:
                 print("Invalid game state received.", e)
@@ -38,7 +41,7 @@ class LoginService:
 
 class ConnectionService(TCPConnection):
 
-    def __init__(self, address: tuple[str, int], game_state_manager: GameStateManager):
+    def __init__(self, address: tuple[str, int], game_state_manager: ClientGameState):
         super().__init__(address)
         self._game_state_manager = game_state_manager
         self._username: str = None
@@ -64,8 +67,8 @@ class ConnectionService(TCPConnection):
                     return
 
                 case PacketTag.PLAYER_GAME_STATE:
-                    typed_packet: Packet = self._get_typed_packet(packet, PlayerGameState)
-                    self._game_state_manager.update_game_state(typed_packet.content)
+                    typed_packet: Packet = self._get_typed_packet(packet, PlayerGameStateData)
+                    self._game_state_manager.update(typed_packet.content)
                     events.UPDATE_GAME_STATE.trigger(typed_packet.content)
 
                 case PacketTag.NEW_BOSS:
@@ -100,29 +103,31 @@ class ConnectionService(TCPConnection):
             print("You are logged out now.")
 
 class GameController:
-    def __init__(self, game_state_manager: GameStateManager):
-        self.game_state_manager = game_state_manager
+    def __init__(self, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
+        self.dispatcher = dispatcher
+        self.client_game_state = client_game_state
         self.login_service = LoginService(self)
         self._connection_service: ConnectionService = None
-    
-    def on_logged_in(self, username: str, address: tuple[str, int], game_state: PlayerGameState):
+        self.dispatcher.subscribe(Events.ATTACK_CLICKED, self.on_attack_clicked)
+
+    def on_logged_in(self, username: str, address: tuple[str, int], game_state: PlayerGameStateData):
         if self._connection_service:
             self._connection_service.stop_event.set()
         print(f"You are now logged in as {username}")
-        self._connection_service = ConnectionService(address, self.game_state_manager)
+        self._connection_service = ConnectionService(address, self.client_game_state)
         #self._connection_service.start()
-        self.game_state_manager.update_game_state(game_state)
-        events.ON_LOGGED_IN.trigger(self.game_state_manager)
+        self.client_game_state.update(game_state)
+        self.dispatcher.emit(Events.LOGGED_IN, self.client_game_state)
 
-    def attack_clicked(self):
-        damage = self.game_state_manager.player.damage
-        self.game_state_manager.attack_boss()
+    def on_attack_clicked(self):
+        damage = self.client_game_state.player.damage
+        self.client_game_state.attack_boss()
         self._connection_service.send_attack(damage)
-        return self.game_state_manager.boss
+        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state)
+        return self.client_game_state.boss
 
     def on_logout(self):
         if self._connection_service:
             self._connection_service.send_logout()
-        self.game_state_manager.player.logged_in = False
-        events.ON_LOGGED_OUT.trigger()
-        self.player_app.show_frame('LoginPage')
+        self.client_game_state.player.logged_in = False
+        self.dispatcher.emit(Events.LOGGED_OUT)

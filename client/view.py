@@ -1,13 +1,15 @@
 from __future__ import annotations
-import customtkinter as ctk
-import tkinter as tk
-import os
-from ctypes import windll
-from PIL import Image, ImageTk
-from model import Boss, GameStateManager
-from controller import GameController
-import events
 
+import os
+import tkinter as tk
+from ctypes import windll
+
+import customtkinter as ctk
+from PIL import Image, ImageTk
+
+from client.events import UIEventDispatcher, Events
+from model import Boss, ClientGameState
+from shared.data import PlayerGameStateData
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -18,36 +20,39 @@ class PlayerApp:
     UI class for the player. Allows a player to interact with the game.
     """
 
-    def __init__(self, game_controller: GameController):
+    def __init__(self, root: tk.Tk, dispatcher: UIEventDispatcher):
         self.frames: dict[type, ctk.CTkFrame] = {}
-        self.game_controller = game_controller
-        events.ON_LOGGED_IN.subscribe(self.on_logged_in)
-        events.UPDATE_GAME_STATE.subscribe(self.on_update_game_page)
-        
-        self.__start()
+        self.root = root
+        self.dispatcher = dispatcher
 
-    def __start(self):
+        
+        self._setup()
+
+    def _setup(self):
+        # Event subscriptions
+        self.dispatcher.subscribe(Events.LOGGED_IN, self.on_logged_in)
+        self.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.on_update_game_page)
+
+        # Window setup
         ctk.set_widget_scaling(1.0)
         ctk.set_window_scaling(1.0)
 
-        # we use Tk since Ctk adds unwanted styling to the root
-        root = tk.Tk()
-        root.title("Kill the Boss")
-        root.geometry("600x400")
-        root.geometry(f"{600}x{400}")
-        root.resizable(False, False)
+        self.root.title("Kill the Boss")
+        self.root.geometry("600x400")
+        self.root.geometry(f"{600}x{400}")
+        self.root.resizable(False, False)
 
         favicon = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "Alien.ico"))
         photo = ImageTk.PhotoImage(favicon)
-        root.iconphoto(True, photo)
+        self.root.iconphoto(True, photo)
 
+        # Setup frames
         for Page in (LoginPage, GamePage):
-            frame = Page(root, self)
+            frame = Page(self.root, self)
             self.frames[Page] = frame
             frame.place(x=0, y=0, relwidth=1, relheight=1)
 
         self.show_frame(LoginPage)
-        root.mainloop()
 
     def show_frame(self, frame_to_show: type[ctk.CTkFrame]):
         # call on_hide on previous frame if implemented
@@ -70,12 +75,12 @@ class PlayerApp:
         # track current frame for future hide calls
         self.current_frame = new_frame
     
-    def on_update_game_page(self, game_state: GameStateManager):
+    def on_update_game_page(self, game_state: ClientGameState):
         """Updates the GamePage with the latest game state."""
         game_page: GamePage = self.frames[GamePage]
         game_page.update_frame(game_state)
     
-    def on_logged_in(self, game_state: GameStateManager):
+    def on_logged_in(self, game_state: ClientGameState):
         self.show_frame(GamePage)
         game_page: GamePage = self.frames[GamePage]
         game_page.update_frame(game_state)
@@ -103,7 +108,7 @@ class LoginPage(ctk.CTkFrame):
 
     def login(self):
         username = self.username_input.get()
-        self.app.game_controller.login_service.login(username)
+        self.app.dispatcher.emit(Events.LOGIN_CLICKED, username)
 
 
 class GamePage(ctk.CTkFrame):
@@ -164,12 +169,13 @@ class GamePage(ctk.CTkFrame):
         # Do not bind here. GamePage will bind/unbind when shown/hidden so
         # the space key only works while this frame is active.
 
-    def update_frame(self, game_state: GameStateManager):
+    def update_frame(self, game_state: ClientGameState):
         self.canvas.itemconfig(self.character, image=self.character_frames[0])
-        self.level_label.config(text=f"Level: {game_state.player.level}")
-        self.players_label.config(text=f"Players: {game_state.player_count}")
-        self.boss_name_label.config(text=game_state.boss.name)
+        self.level_label.configure(text=f"Level: {game_state.player.level}")
+        self.players_label.configure(text=f"Players: {game_state.player_count}")
+        self.boss_name_label.configure(text=game_state.boss.name)
         self._update_health_bar(self.canvas, game_state.boss.health, game_state.boss.max_health)
+        self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
         if game_state.boss.is_dead() and not self.boss_defeated:
             self._show_defeated_text()
             self.boss_defeated = True
@@ -216,20 +222,20 @@ class GamePage(ctk.CTkFrame):
         if self.boss_defeated:
             return
         print("Attack input received.")
-        boss: Boss = self.app.game_controller.attack_clicked()
+        self.app.dispatcher.emit(Events.ATTACK_CLICKED)
         
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
         self.after(100, lambda: self.canvas.itemconfig(
-            self.character, image=self.character_frames[2 if boss.is_dead() else 0]), )
+            self.character, image=self.character_frames[0]))
         
         # Update boss health label
-        self._update_health_bar(self.canvas)
+        #self._update_health_bar(self.canvas)
 
-        if boss.is_dead():
-            self.boss_defeated = True
-            self.attack_button._state = "disabled"
-            self._show_defeated_text()
+        #if boss.is_dead():
+        #    self.boss_defeated = True
+        #    self.attack_button._state = "disabled"
+        #    self._show_defeated_text()
 
     def _show_defeated_text(self):
         self.canvas.create_text(304,204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black", tags="defeat_text")

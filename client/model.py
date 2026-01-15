@@ -1,12 +1,12 @@
-from shared.data import PlayerData, BossData, PlayerGameState
+from shared.data import PlayerData, BossData, PlayerGameStateData
 
-class GameStateManager:
+class ClientGameState:
     def __init__(self):
         self.player = Player()
         self.boss = Boss()
         self.player_count = 0
 
-    def update_game_state(self, game_state: PlayerGameState):
+    def update(self, game_state: PlayerGameStateData):
         self.player.update_state(game_state.player)
         self.boss.update_state(game_state.boss)
         self.player_count = game_state.player_count

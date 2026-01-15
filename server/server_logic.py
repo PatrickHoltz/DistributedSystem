@@ -12,7 +12,7 @@ class GameStateManager:
     base_damage = 10
 
     def __init__(self, server_loop: 'ServerLoop'):
-        self._game_state = GameState(players={}, boss=self._create_boss(1))
+        self._game_state = GameStateData(players={}, boss=self._create_boss(1))
         self._server_loop = server_loop
 
     def _create_boss(self, stage: int) -> BossData:
@@ -44,8 +44,8 @@ class GameStateManager:
         if username in self._game_state.players:
             self._game_state.players[username].online = False
 
-    def get_state_update(self, username: str) -> PlayerGameState:
-        return PlayerGameState(
+    def get_state_update(self, username: str) -> PlayerGameStateData:
+        return PlayerGameStateData(
             boss=self._game_state.boss,
             player_count=self.get_online_player_count(),
             player=self._game_state.players[username]

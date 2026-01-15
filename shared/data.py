@@ -15,7 +15,7 @@ class BossData:
     max_health: int
 
 @dataclass
-class GameState:
+class GameStateData:
     players: dict[str, PlayerData]
     boss: BossData
 
@@ -26,7 +26,7 @@ class GameState:
         return cls(players=players, boss=boss_data)
 
 @dataclass
-class PlayerGameState:
+class PlayerGameStateData:
     """Snapshot of the game state relevant to a specific player."""
     boss: BossData
     player: PlayerData
