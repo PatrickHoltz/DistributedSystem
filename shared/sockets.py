@@ -8,7 +8,7 @@ import json
 from dataclasses import asdict, is_dataclass
 import struct
 import queue
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple, Callable, TypeVar, Type
 from enum import StrEnum
 
 
@@ -215,6 +215,8 @@ class BroadcastListener(Thread):
 class TCPConnection(mp.Process):
     """An ongoing TCP connection which can be used for both sending and receiving packets."""
 
+    T = TypeVar('T')
+
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
     def __init__(self, address: Tuple[str, int], backlog: int = 1, buffer_size: int = 4096):
         super().__init__(daemon=True)
@@ -232,7 +234,7 @@ class TCPConnection(mp.Process):
         self._send_queue.put(packet)
 
     def get_packet(self, timeout: Optional[float] = None):
-        """Blocks and waits for an incoming packet. A timeout can be provided to cancel after some time."""
+        """Blocks and waits for an incoming packet. A timeout can be provided to cancel and return None."""
         try:
             return self._recv_queue.get(timeout=timeout)
         except queue.Empty:
@@ -251,10 +253,22 @@ class TCPConnection(mp.Process):
             data += chunk
         return data
 
+    @classmethod
+    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
+        """
+        Extracts the content of a packet and converts it to the specified type.
+        Returns None if the conversion fails.
+        """
+        try:
+            content = content_type(**packet.content)
+            return Packet(content=content, tag=packet.tag)
+        except TypeError:
+            return None
+
     def run(self):
 
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # damit man nach crash direkt wieder benutzenm kann
+        # damit man nach crash direkt wieder benutzen kann
         server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_sock.bind(self.address)
         server_sock.listen(self.backlog)
@@ -292,7 +306,7 @@ class TCPConnection(mp.Process):
                     conn.close()
                     conn = None
                 except socket.timeout:
-                    # kein neues paket
+                    # no new packet available
                     pass
 
         finally:

@@ -4,4 +4,5 @@ import shared.sockets as sockets
 from server_logic import ServerLoop
 
 
-server_loop = ServerLoop()
+if __name__ == '__main__':
+    server_loop = ServerLoop()

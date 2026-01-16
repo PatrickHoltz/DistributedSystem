@@ -8,7 +8,7 @@ class ClientGameState:
 
     def update(self, game_state: PlayerGameStateData):
         self.player.update_state(game_state.player)
-        self.boss.update_state(game_state.boss)
+        self.boss.update(game_state.boss)
         self.player_count = game_state.player_count
     
     def attack_boss(self):
@@ -41,7 +41,7 @@ class Boss:
             self.health = 0
             print("Boss defeated!")
 
-    def update_state(self, boss_data: BossData):
+    def update(self, boss_data: BossData):
         self.name = boss_data.name
         self.stage = boss_data.stage
         self.health = boss_data.health

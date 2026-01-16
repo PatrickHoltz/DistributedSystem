@@ -33,4 +33,6 @@ class Events(StrEnum):
     LOGGED_IN = "logged_in"
     LOGGED_OUT = "logged_out"
     LOGIN_CLICKED = "log_in_clicked"
+    LOGOUT_CLICKED = "logout_clicked"
     ATTACK_CLICKED = "attack_clicked"
+    NEW_BOSS = "new_boss"

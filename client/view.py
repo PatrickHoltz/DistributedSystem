@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from ctypes import windll
+from typing import cast
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
@@ -25,13 +26,13 @@ class PlayerApp:
         self.root = root
         self.dispatcher = dispatcher
 
-        
         self._setup()
 
     def _setup(self):
         # Event subscriptions
         self.dispatcher.subscribe(Events.LOGGED_IN, self.on_logged_in)
         self.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.on_update_game_page)
+        self.dispatcher.subscribe(Events.NEW_BOSS, self.on_new_boss)
 
         # Window setup
         ctk.set_widget_scaling(1.0)
@@ -74,20 +75,28 @@ class PlayerApp:
 
         # track current frame for future hide calls
         self.current_frame = new_frame
-    
+
     def on_update_game_page(self, game_state: ClientGameState):
         """Updates the GamePage with the latest game state."""
-        game_page: GamePage = self.frames[GamePage]
+        game_page: GamePage = cast(GamePage, self.frames[GamePage])
         game_page.update_frame(game_state)
-    
+
     def on_logged_in(self, game_state: ClientGameState):
         self.show_frame(GamePage)
-        game_page: GamePage = self.frames[GamePage]
+        game_page: GamePage = cast(GamePage, self.frames[GamePage])
         game_page.update_frame(game_state)
+
+    def on_new_boss(self):
+        game_page: GamePage = cast(GamePage, self.frames[GamePage])
+        game_page.boss_defeated = False
+        game_page.attack_button._state = "normal"
+        game_page.after(3000, )
 
 
 class LoginPage(ctk.CTkFrame):
-    def __init__(self, master, app: PlayerApp, width=200, height=200, corner_radius=None, border_width=None, bg_color="transparent", fg_color=None, border_color=None, background_corner_colors=None, overwrite_preferred_drawing_method=None, **kwargs):
+    def __init__(self, master, app: PlayerApp, width=200, height=200, corner_radius=None, border_width=None,
+                 bg_color="transparent", fg_color=None, border_color=None, background_corner_colors=None,
+                 overwrite_preferred_drawing_method=None, **kwargs):
         super().__init__(master, width, height, corner_radius, border_width, bg_color, fg_color,
                          border_color, background_corner_colors, overwrite_preferred_drawing_method, **kwargs)
         self.app = app
@@ -112,29 +121,26 @@ class LoginPage(ctk.CTkFrame):
 
 
 class GamePage(ctk.CTkFrame):
-
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    
-    
 
-    def __init__(self, master, app: PlayerApp, width=200, height=200, corner_radius=None, border_width=None, bg_color="transparent", fg_color=None, border_color=None, background_corner_colors=None, overwrite_preferred_drawing_method=None, **kwargs):
+    def __init__(self, master, app: PlayerApp, width=200, height=200, corner_radius=None, border_width=None,
+                 bg_color="transparent", fg_color=None, border_color=None, background_corner_colors=None,
+                 overwrite_preferred_drawing_method=None, **kwargs):
         super().__init__(master, width, height, corner_radius, border_width, bg_color, fg_color,
                          border_color, background_corner_colors, overwrite_preferred_drawing_method, **kwargs)
         # keep a reference to the root/master so we can bind/unbind on show/hide
         self.character_frames = [
-        tk.PhotoImage(file=os.path.join(
-            self.BASE_DIR, "images", "Alien.png")),
-        tk.PhotoImage(file=os.path.join(
-            self.BASE_DIR, "images", "AlienHit.png")),
-        tk.PhotoImage(file=os.path.join(
-            self.BASE_DIR, "images", "AlienDead.png"))
+            tk.PhotoImage(file=os.path.join(
+                self.BASE_DIR, "images", "Alien.png")),
+            tk.PhotoImage(file=os.path.join(
+                self.BASE_DIR, "images", "AlienHit.png")),
+            tk.PhotoImage(file=os.path.join(
+                self.BASE_DIR, "images", "AlienDead.png"))
         ]
-
 
         self.root = master
         self.app = app
         self.boss_defeated = False
-        
 
         # Background Canvas for displaying the images
         self.canvas = tk.Canvas(self, highlightthickness=0, bg="blue")
@@ -163,13 +169,16 @@ class GamePage(ctk.CTkFrame):
 
         # Attack button
         self.attack_button = ctk.CTkButton(self, text="Attack!", bg_color="black",
-                               corner_radius=0, command=self._on_attack_input)
-        self.attack_button.pack(side="bottom", pady = 20)
+                                           corner_radius=0, command=self._on_attack_input)
+        self.attack_button.pack(side="bottom", pady=20)
 
-        # Do not bind here. GamePage will bind/unbind when shown/hidden so
-        # the space key only works while this frame is active.
+        # Logout button
+        self.logout_button = ctk.CTkButton(self, text="Logout", bg_color="black", corner_radius=0, width=60,
+                                           fg_color="red4", hover_color="red3", command=self._on_logout_pressed)
+        self.logout_button.place(anchor="se", relx=1.0, rely=1.0)
 
     def update_frame(self, game_state: ClientGameState):
+        """Updates the GamePage with the provided game state."""
         self.canvas.itemconfig(self.character, image=self.character_frames[0])
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
@@ -183,19 +192,21 @@ class GamePage(ctk.CTkFrame):
             self.canvas.delete("defeat_text")
             self.boss_defeated = False
 
-    def _update_health_bar(self, canvas: tk.Canvas, health = 100, max_health = 100):
+    def _update_health_bar(self, canvas: tk.Canvas, health=100, max_health=100):
         """Destroys the old health bar and creates a new one based on the boss's current health."""
         canvas.delete("healthbar")
-        text_id = self.canvas.create_text(450,150, text=f"Health: {health}", font=("Arial", 22, "bold"), fill="white", width=200, tags="healthbar")
+        text_id = self.canvas.create_text(450, 150, text=f"Health: {health}", font=("Arial", 22, "bold"), fill="white",
+                                          width=200, tags="healthbar")
         bbox = self.canvas.bbox(text_id)
         x1, y1, x2, y2 = bbox
         padx = 10
         pady = 5
         health_percent = health / max_health
-        health_rect_end = x1 - padx + health_percent * (x2 - x1 + 2* padx)
-        self.canvas.create_rectangle(x1-padx, y1-pady, x2+padx, y2+pady, fill="red", tags="healthbar")
-        health_rect_id = self.canvas.create_rectangle(x1-padx, y1-pady, health_rect_end, y2+pady, fill="green2", tags="healthbar")
-        self.canvas.create_rectangle(x1-padx, y1-pady, x2+padx, y2+pady, width=4, tags="healthbar")
+        health_rect_end = x1 - padx + health_percent * (x2 - x1 + 2 * padx)
+        self.canvas.create_rectangle(x1 - padx, y1 - pady, x2 + padx, y2 + pady, fill="red", tags="healthbar")
+        health_rect_id = self.canvas.create_rectangle(x1 - padx, y1 - pady, health_rect_end, y2 + pady, fill="green2",
+                                                      tags="healthbar")
+        self.canvas.create_rectangle(x1 - padx, y1 - pady, x2 + padx, y2 + pady, width=4, tags="healthbar")
 
         # Fix ordering
         canvas.tag_raise(text_id, health_rect_id)
@@ -223,21 +234,33 @@ class GamePage(ctk.CTkFrame):
             return
         print("Attack input received.")
         self.app.dispatcher.emit(Events.ATTACK_CLICKED)
-        
+
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
         self.after(100, lambda: self.canvas.itemconfig(
             self.character, image=self.character_frames[0]))
-        
-        # Update boss health label
-        #self._update_health_bar(self.canvas)
 
-        #if boss.is_dead():
+        # Update boss health label
+        # self._update_health_bar(self.canvas)
+
+        # if boss.is_dead():
         #    self.boss_defeated = True
         #    self.attack_button._state = "disabled"
         #    self._show_defeated_text()
 
+    def _on_logout_pressed(self):
+        """Event callback for when the player clicks the logout button."""
+
+        self.app.show_frame(LoginPage)
+        self.app.dispatcher.emit(Events.LOGOUT_CLICKED)
+
     def _show_defeated_text(self):
-        self.canvas.create_text(304,204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black", tags="defeat_text")
-        self.canvas.create_text(300,200, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="white", tags="defeat_text")
-        self.canvas.create_text(300,260, text="Get ready for the next boss...", font=("Arial", 20, "bold"), fill="white", tags="defeat_text")
+        self.canvas.create_text(304, 204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black",
+                                tags="defeat_text")
+        self.canvas.create_text(300, 200, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="white",
+                                tags="defeat_text")
+        self.canvas.create_text(300, 260, text="Get ready for the next boss...", font=("Arial", 20, "bold"),
+                                fill="white", tags="defeat_text")
+
+    def _init_new_boss(self):
+        pass

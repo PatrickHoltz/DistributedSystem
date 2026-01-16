@@ -238,10 +238,8 @@ class ServerLoop:
 
 class ClientCommunicator(TCPConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
-        Outgoing packets can be sent using the send method.
+        Outgoing packets can be sent using the inherited send method.
     """
-
-    T = TypeVar('T')
 
     TAG_TO_DATA = {
         PacketTag.ATTACK: AttackData,
@@ -251,9 +249,8 @@ class ClientCommunicator(TCPConnection):
     }
 
     def __init__(self, address: tuple[str, int], username: str, in_queue: mp.Queue):
-        """ClientCommunicator runs in its own process. Only pass pickable
-        objects into __init__ (primitives and multiprocessing queues)."""
         super().__init__(address)
+
         self._username = username
         self._in_queue = in_queue
         self._stop_event = mp.Event()
@@ -270,20 +267,20 @@ class ClientCommunicator(TCPConnection):
         """Checks packet validity and provides the server loop with it."""
 
         data_class = self.TAG_TO_DATA.get(packet.tag)
+
+        # Abort if the packet tag is unknown
         if not data_class:
-            raise ValueError(f"Unknown packet tag received: {packet.tag}")
+            print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
 
-        typed_packet = self._get_typed_packet(packet, data_class)
+        typed_packet = self.get_typed_packet(packet, data_class)
 
+        # Abort if the packet content could not be transformed into the appropriate data class
+        if not typed_packet:
+            print(f"Corrupt packet received. Aborting packet.")
+            return
+
+        print(f"Packet {typed_packet.tag} successfully received.")
         # Put the received, typed packet onto the shared in_queue so the
         # main ServerLoop process can consume it.
         self._in_queue.put((self._username, typed_packet))
 
-    def _get_typed_packet(self, packet: Packet, content_type: T) -> Packet:
-        # Validate packet content
-        try:
-            content = content_type(**packet.content)
-            return Packet(content=content, tag=packet.tag)
-        except TypeError:
-            raise TypeError(
-                f"Could not extract packet content of type {content_type}")
