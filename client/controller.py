@@ -69,8 +69,8 @@ class ConnectionService(TCPClientConnection):
             if packet.tag == PacketTag.NEW_BOSS:
                 typed_packet = TCPClientConnection.get_typed_packet(packet, BossData)
                 if typed_packet:
+                    print("New boss received:", typed_packet.content)
                     self._client_game_state.boss.update(typed_packet.content)
-                    self.dispatcher.emit(Events.NEW_BOSS)
                     self.dispatcher.emit(Events.NEW_BOSS, self._client_game_state)
                 return
 
@@ -84,8 +84,8 @@ class ConnectionService(TCPClientConnection):
         except Exception as e:
             print("Error handling packet:", e)
 
-    def send_attack(self, damage: int):
-        attack_data = AttackData(username=self._username, damage=damage)
+    def send_attack(self):
+        attack_data = AttackData(username=self._username)
         packet = Packet(attack_data, tag=PacketTag.ATTACK)
         self.send(packet)
 
@@ -103,6 +103,7 @@ class GameController:
         self.login_service = LoginService(self)
         self._connection_service: Optional[ConnectionService] = None
         self.dispatcher.subscribe(Events.ATTACK_CLICKED, self.on_attack_clicked)
+        self.dispatcher.subscribe(Events.LOGOUT_CLICKED, self.on_logout_clicked)
 
     def on_logged_in(self, username: str, address: tuple[str, int], login_reply: LoginReplyData):
         if self._connection_service:
@@ -116,13 +117,12 @@ class GameController:
         self.dispatcher.emit(Events.LOGGED_IN, self.client_game_state)
 
     def on_attack_clicked(self):
-        damage = self.client_game_state.player.damage
         self.client_game_state.attack_boss()
-        self._connection_service.send_attack(damage)
+        self._connection_service.send_attack()
         self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state)
         return self.client_game_state.boss
 
-    def on_logout(self):
+    def on_logout_clicked(self):
         if self._connection_service:
             self._connection_service.send_logout()
         self.client_game_state.player.logged_in = False

@@ -61,7 +61,6 @@ class StringMessage:
 @dataclass
 class AttackData:
     username: str
-    damage: int
 
 @dataclass
 class ServerHello:

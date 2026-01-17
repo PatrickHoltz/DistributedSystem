@@ -31,8 +31,6 @@ class PlayerApp:
     def _setup(self):
         # Event subscriptions
         self.dispatcher.subscribe(Events.LOGGED_IN, self.on_logged_in)
-        self.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.on_update_game_page)
-
 
         # Window setup
         ctk.set_widget_scaling(1.0)
@@ -76,21 +74,10 @@ class PlayerApp:
         # track current frame for future hide calls
         self.current_frame = new_frame
 
-    def on_update_game_page(self, game_state: ClientGameState):
-        """Updates the GamePage with the latest game state."""
-        game_page: GamePage = cast(GamePage, self.frames[GamePage])
-        game_page.update_frame(game_state)
-
     def on_logged_in(self, game_state: ClientGameState):
         self.show_frame(GamePage)
         game_page: GamePage = cast(GamePage, self.frames[GamePage])
         game_page.update_frame(game_state)
-
-    def on_new_boss(self):
-        game_page: GamePage = cast(GamePage, self.frames[GamePage])
-        game_page.boss_defeated = False
-        game_page.attack_button._state = "normal"
-        game_page.after(3000, )
 
 
 class LoginPage(ctk.CTkFrame):
@@ -142,6 +129,7 @@ class GamePage(ctk.CTkFrame):
         self.app = app
         self.boss_defeated = False
 
+        self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
         self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
 
         # Background Canvas for displaying the images
@@ -183,6 +171,7 @@ class GamePage(ctk.CTkFrame):
         """Updates the GamePage with the provided game state."""
         if self.boss_defeated:
             return
+        print("Updating GamePage")
         self.canvas.itemconfig(self.character, image=self.character_frames[0])
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
@@ -266,10 +255,11 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_text(300, 260, text="Get ready for the next boss...", font=("Arial", 20, "bold"),
                                 fill="white", tags="defeat_text")
 
-    def _on_new_boss(self):
+    def _on_new_boss(self, game_state: ClientGameState):
         self.boss_defeated = True
-        self.after(3000, self._init_new_boss)
+        self.after(3000, lambda: self._init_new_boss(game_state))
 
-    def _init_new_boss(self):
+    def _init_new_boss(self, game_state: ClientGameState):
+        self.canvas.delete("defeat_text")
         self.boss_defeated = False
-        #self.update_frame(game_state)
+        self.update_frame(game_state)

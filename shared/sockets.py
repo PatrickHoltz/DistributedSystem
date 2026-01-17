@@ -333,7 +333,8 @@ class TCPClientConnection(_TCPConnection, Thread):
 
                 # Read one incoming packet if available
                 try:
-                    self._recv_packet(self.socket)
+                    packet = self._recv_packet(self.socket)
+                    self._handle_packet(packet)
                 except socket.timeout:
                     # no data available right now
                     continue

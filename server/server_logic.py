@@ -11,27 +11,33 @@ class GameStateManager:
     """Manager of the overall game state."""
     base_damage = 10
 
-    def __init__(self, server_loop: 'ServerLoop'):
+    def __init__(self):
         self._game_state = GameStateData(players={}, boss=self._create_boss(1))
-        self._server_loop = server_loop
 
-    def _create_boss(self, stage: int) -> BossData:
+    @classmethod
+    def _create_boss(cls, stage: int) -> BossData:
         health = stage * 100
         return BossData(name=f"Alien{stage}", stage=stage, health=health, max_health=health)
 
-    def apply_attack(self, username: str, damage: int):
+    def apply_attack(self, username: str):
+        """Applies an attack from the given player to the current boss. Advances the boss stage if the boss is defeated.
+        Returns True if the boss is defeated afterward, False otherwise.
+        """
         if username in self._game_state.players:
+            damage = self._game_state.players[username].damage
             self._game_state.boss.health -= damage
-            if self._game_state.boss.health < 0:
+            boss_defeated = self._game_state.boss.health <= 0
+            if boss_defeated:
+                print("Boss defeated. Advancing to next stage.")
                 self._game_state.boss.health = 0
-                self._server_loop.multicast_packet(Packet(StringMessage("Boss dead"), tag=PacketTag.BOSS_DEAD))
-                Timer(3.0, self._advance_boss_stage).start()
+                self._advance_boss_stage()
+            return boss_defeated
+        return self._game_state.boss.health <= 0
     
     def _advance_boss_stage(self):
         new_stage = self._game_state.boss.stage + 1
         new_boss = self._create_boss(new_stage)
         self._game_state.boss = new_boss
-        self._server_loop.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online in all cases."""
@@ -44,12 +50,15 @@ class GameStateManager:
         if username in self._game_state.players:
             self._game_state.players[username].online = False
 
-    def get_state_update(self, username: str) -> PlayerGameStateData:
+    def get_player_state(self, username: str) -> PlayerGameStateData:
         return PlayerGameStateData(
             boss=self._game_state.boss,
             player_count=self.get_online_player_count(),
             player=self._game_state.players[username]
         )
+
+    def get_boss(self) -> BossData:
+        return self._game_state.boss
     
     def get_online_player_count(self) -> int:
         online_players = [p for p in self._game_state.players.values() if p.online]
@@ -133,7 +142,7 @@ class ConnectionManager:
                 server_port = self._add_connection(login_data.username, address)
 
 
-                game_state_update = self.server_loop.game_state_manager.get_state_update(login_data.username)
+                game_state_update = self.server_loop.game_state_manager.get_player_state(login_data.username)
                 login_reply = LoginReplyData(server_port, game_state_update)
 
                 response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
@@ -153,7 +162,7 @@ class ServerLoop:
         self.server_uuid = str(uuid.uuid4())
 
         self.connection_manager = ConnectionManager(self)
-        self.game_state_manager = GameStateManager(self)
+        self.game_state_manager = GameStateManager()
 
         self._is_stopped = False
         self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
@@ -204,7 +213,7 @@ class ServerLoop:
     def _update_game_states(self):
         """Writes game state updates for all connected clients into the outgoing queue."""
         for username in self.connection_manager.active_connections.keys():
-            game_state_update = self.game_state_manager.get_state_update(username)
+            game_state_update = self.game_state_manager.get_player_state(username)
             self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.PLAYER_GAME_STATE)))
 
     def _process_incoming_messages(self):
@@ -223,11 +232,15 @@ class ServerLoop:
                     self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
-                    self.game_state_manager.apply_attack(username, packet.content.damage)
+                    boss_defeated = self.game_state_manager.apply_attack(username)
+                    if boss_defeated:
+                        new_boss = self.game_state_manager.get_boss()
+                        self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
                     self.game_state_manager.logout_player(username)
+                    print(f"Player '{username}' logged out.")
                 case _:
                     pass
             # response = None
