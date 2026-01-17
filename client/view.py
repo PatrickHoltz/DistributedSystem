@@ -171,7 +171,7 @@ class GamePage(ctk.CTkFrame):
         """Updates the GamePage with the provided game state."""
         if self.boss_defeated:
             return
-        print("Updating GamePage")
+        print(f"Updating GamePage, health={game_state.boss.health}")
         self.canvas.itemconfig(self.character, image=self.character_frames[0])
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
@@ -232,14 +232,6 @@ class GamePage(ctk.CTkFrame):
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
         self.after(100, lambda: self.canvas.itemconfig(
             self.character, image=self.character_frames[0]))
-
-        # Update boss health label
-        # self._update_health_bar(self.canvas)
-
-        # if boss.is_dead():
-        #    self.boss_defeated = True
-        #    self.attack_button._state = "disabled"
-        #    self._show_defeated_text()
 
     def _on_logout_pressed(self):
         """Event callback for when the player clicks the logout button."""

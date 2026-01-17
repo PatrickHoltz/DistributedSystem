@@ -243,8 +243,6 @@ class ServerLoop:
                     print(f"Player '{username}' logged out.")
                 case _:
                     pass
-            # response = None
-            # self.out_queue.put((username, response))
 
     def _send_outgoing_messages(self):
         processed = 0
