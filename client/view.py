@@ -32,7 +32,7 @@ class PlayerApp:
         # Event subscriptions
         self.dispatcher.subscribe(Events.LOGGED_IN, self.on_logged_in)
         self.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.on_update_game_page)
-        self.dispatcher.subscribe(Events.NEW_BOSS, self.on_new_boss)
+
 
         # Window setup
         ctk.set_widget_scaling(1.0)
@@ -142,6 +142,8 @@ class GamePage(ctk.CTkFrame):
         self.app = app
         self.boss_defeated = False
 
+        self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
+
         # Background Canvas for displaying the images
         self.canvas = tk.Canvas(self, highlightthickness=0, bg="blue")
         self.canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -179,6 +181,8 @@ class GamePage(ctk.CTkFrame):
 
     def update_frame(self, game_state: ClientGameState):
         """Updates the GamePage with the provided game state."""
+        if self.boss_defeated:
+            return
         self.canvas.itemconfig(self.character, image=self.character_frames[0])
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
@@ -262,5 +266,10 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_text(300, 260, text="Get ready for the next boss...", font=("Arial", 20, "bold"),
                                 fill="white", tags="defeat_text")
 
+    def _on_new_boss(self):
+        self.boss_defeated = True
+        self.after(3000, self._init_new_boss)
+
     def _init_new_boss(self):
-        pass
+        self.boss_defeated = False
+        #self.update_frame(game_state)

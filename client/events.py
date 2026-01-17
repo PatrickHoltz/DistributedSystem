@@ -3,6 +3,10 @@ from enum import StrEnum
 
 
 class UIEventDispatcher:
+    """A simple event dispatcher for Tkinter applications.
+    This allows subscribing to events and emitting them in a thread-safe manner.
+    Events are processed every 20ms.
+    """
     def __init__(self, root):
         self._queue = queue.Queue()
         self._root = root

@@ -20,7 +20,7 @@ class GameStateData:
     boss: BossData
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict):
         players = {username: PlayerData(**pdata) for username, pdata in data['players'].items()}
         boss_data = BossData(**data['boss'])
         return cls(players=players, boss=boss_data)
@@ -33,11 +33,22 @@ class PlayerGameStateData:
     player_count: int
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict):
         boss_data = BossData(**data['boss'])
         player_data = PlayerData(**data['player'])
         player_count = data['player_count']
         return cls(boss=boss_data, player=player_data, player_count=player_count)
+
+@dataclass
+class LoginReplyData:
+    server_port: int
+    game_state: PlayerGameStateData
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        server_port = data['server_port']
+        game_state = PlayerGameStateData.from_dict(data['game_state']) if data['game_state'] else None
+        return cls(server_port=server_port, game_state=game_state)
 
 @dataclass
 class LoginData:

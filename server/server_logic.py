@@ -1,9 +1,9 @@
 import uuid
-from shared.sockets import TCPConnection, Packet, PacketTag, BroadcastListener, BroadcastSocket
+from shared.sockets import _TCPConnection, Packet, PacketTag, BroadcastListener, BroadcastSocket, TCPServerConnection
 from shared.data import *
 import multiprocessing as mp
 from typing import TypeVar
-from threading import Timer
+from threading import Timer, Thread
 import time
 
 
@@ -72,15 +72,24 @@ class ConnectionManager:
         self.server_loop = server_loop
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
-    def _add_connection(self, username: str, address: tuple[str, int]):
-        """Adds a new active connection and registers it in the game state manager."""
+    def _add_connection(self, username: str, address: tuple[str, int]) -> int:
+        """Adds a new active connection and registers it in the game state manager.
+        Returns the port number the client communicator is listening on.
+        """
 
         self.server_loop.game_state_manager.login_player(username)
 
-        communicator = ClientCommunicator(address, username, self.server_loop.in_queue)
+        communicator = ClientCommunicator(("", 0), username, self.server_loop.in_queue)
+        communicator.start()
+
         self.active_connections[username] = communicator
         self.last_seen[username] = time.monotonic()
-        communicator.start()
+
+        # Wait until the communicator is ready and retrieve its port
+        server_port = communicator.get_port()
+
+        print("Client connection established for", username, "on port", server_port)
+        return server_port
 
     def remove_connection(self, username: str):
         """Closes an active connection."""
@@ -119,13 +128,16 @@ class ConnectionManager:
         if packet.tag == PacketTag.LOGIN:
             try:
                 login_data = LoginData(**packet.content)
-                print(f"Login registered: {login_data.username}")
+                print(f"Login request received by {login_data.username}")
 
-                
-                self._add_connection(login_data.username, address)
+                server_port = self._add_connection(login_data.username, address)
+
+
                 game_state_update = self.server_loop.game_state_manager.get_state_update(login_data.username)
+                login_reply = LoginReplyData(server_port, game_state_update)
 
-                response = Packet(game_state_update, tag=PacketTag.PLAYER_GAME_STATE)
+                response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
+
                 return response
             except TypeError as e:
                 print("Invalid login data received.", e)
@@ -211,7 +223,7 @@ class ServerLoop:
                     self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
-                    self.game_state_manager.apply_attack(username, packet.content['damage'])
+                    self.game_state_manager.apply_attack(username, packet.content.damage)
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
@@ -236,7 +248,7 @@ class ServerLoop:
     
 
 
-class ClientCommunicator(TCPConnection):
+class ClientCommunicator(TCPServerConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
         Outgoing packets can be sent using the inherited send method.
     """
@@ -249,19 +261,9 @@ class ClientCommunicator(TCPConnection):
     }
 
     def __init__(self, address: tuple[str, int], username: str, in_queue: mp.Queue):
-        super().__init__(address)
+        super().__init__(in_queue)
 
         self._username = username
-        self._in_queue = in_queue
-        self._stop_event = mp.Event()
-        self._recv_timeout = 2.0
-
-    def run(self):
-        while not self._stop_event.is_set():
-            # Wait for incoming packet
-            packet = self.get_packet(self._recv_timeout)
-            if packet:
-                self._handle_packet(packet)
 
     def _handle_packet(self, packet: Packet):
         """Checks packet validity and provides the server loop with it."""
@@ -279,8 +281,7 @@ class ClientCommunicator(TCPConnection):
             print(f"Corrupt packet received. Aborting packet.")
             return
 
-        print(f"Packet {typed_packet.tag} successfully received.")
+        print(f"Packet '{typed_packet.tag}' successfully received.")
         # Put the received, typed packet onto the shared in_queue so the
         # main ServerLoop process can consume it.
-        self._in_queue.put((self._username, typed_packet))
-
+        self._recv_queue.put((self._username, typed_packet))
