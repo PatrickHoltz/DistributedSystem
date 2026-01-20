@@ -1,7 +1,19 @@
+import tkinter as tk
+
 import view
 import controller
 import model
+from client.events import UIEventDispatcher
 
-state_manager = model.GameStateManager()
-game_controller = controller.GameController(state_manager)
-player_app = view.PlayerApp(game_controller)
+tk_root = tk.Tk()
+
+dispatcher = UIEventDispatcher(tk_root)
+
+state_manager = model.ClientGameState()
+game_controller = controller.GameController(state_manager, dispatcher)
+player_app = view.PlayerApp(tk_root, dispatcher)
+
+
+dispatcher.start()
+
+tk_root.mainloop()
