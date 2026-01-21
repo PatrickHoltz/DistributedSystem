@@ -5,15 +5,17 @@ import controller
 import model
 from client.events import UIEventDispatcher
 
-tk_root = tk.Tk()
 
-dispatcher = UIEventDispatcher(tk_root)
+if __name__ == "__main__":
+    tk_root = tk.Tk()
 
-state_manager = model.ClientGameState()
-game_controller = controller.GameController(state_manager, dispatcher)
-player_app = view.PlayerApp(tk_root, dispatcher)
+    dispatcher = UIEventDispatcher(tk_root)
+
+    state_manager = model.ClientGameState()
+    game_controller = controller.GameController(state_manager, dispatcher)
+    player_app = view.PlayerApp(tk_root, dispatcher)
 
 
-dispatcher.start()
+    dispatcher.start()
 
-tk_root.mainloop()
+    tk_root.mainloop()

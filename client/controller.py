@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from queue import Queue
+
 from client.events import UIEventDispatcher, Events
 from shared.data import *
 from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPClientConnection
@@ -46,6 +48,7 @@ class ConnectionService(TCPClientConnection):
     def __init__(self, address: tuple[str, int], username: str, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
         super().__init__(address)
         self.dispatcher = dispatcher
+        #self.event_queue = event_queue
         self._client_game_state = client_game_state
         self._username: str = username
 
@@ -116,7 +119,9 @@ class GameController:
         self.client_game_state.update(login_reply.game_state)
         self.dispatcher.emit(Events.LOGGED_IN, self.client_game_state)
 
+
     def on_attack_clicked(self):
+        """Callback for when the attack button is clicked."""
         self.client_game_state.attack_boss()
         self._connection_service.send_attack()
         self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state)

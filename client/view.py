@@ -77,6 +77,7 @@ class PlayerApp:
     def on_logged_in(self, game_state: ClientGameState):
         self.show_frame(GamePage)
         game_page: GamePage = cast(GamePage, self.frames[GamePage])
+        print("On logged in view")
         game_page.update_frame(game_state)
 
 
