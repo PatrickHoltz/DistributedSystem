@@ -16,8 +16,8 @@ class GameStateManager:
 
     @classmethod
     def _create_boss(cls, stage: int) -> BossData:
-        health = stage * 100
-        return BossData(name=f"Alien{stage}", stage=stage, health=health, max_health=health)
+        health = 100 + stage * 10
+        return BossData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
 
     def apply_attack(self, username: str):
         """Applies an attack from the given player to the current boss. Advances the boss stage if the boss is defeated.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from ctypes import windll
+from os import stat_result
 from typing import cast
 
 import customtkinter as ctk
@@ -129,6 +130,7 @@ class GamePage(ctk.CTkFrame):
         self.root = master
         self.app = app
         self.boss_defeated = False
+        self.is_animating_boss = False
 
         self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
         self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
@@ -172,19 +174,19 @@ class GamePage(ctk.CTkFrame):
         """Updates the GamePage with the provided game state."""
         if self.boss_defeated:
             return
-        print(f"Updating GamePage, health={game_state.boss.health}")
-        self.canvas.itemconfig(self.character, image=self.character_frames[0])
+
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
         self.boss_name_label.configure(text=game_state.boss.name)
         self._update_health_bar(self.canvas, game_state.boss.health, game_state.boss.max_health)
-        self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
-        if game_state.boss.is_dead() and not self.boss_defeated:
-            self._show_defeated_text()
+
+        if not self.is_animating_boss:
+            self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
+
+        if game_state.boss.is_dead():
+            self._display_defeated_screen()
             self.boss_defeated = True
-        elif not game_state.boss.is_dead() and self.boss_defeated:
-            self.canvas.delete("defeat_text")
-            self.boss_defeated = False
+
 
     def _update_health_bar(self, canvas: tk.Canvas, health=100, max_health=100):
         """Destroys the old health bar and creates a new one based on the boss's current health."""
@@ -231,8 +233,8 @@ class GamePage(ctk.CTkFrame):
 
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
-        self.after(100, lambda: self.canvas.itemconfig(
-            self.character, image=self.character_frames[0]))
+        self.is_animating_boss = True
+        self.after(100, self._attack_after)
 
     def _on_logout_pressed(self):
         """Event callback for when the player clicks the logout button."""
@@ -240,19 +242,31 @@ class GamePage(ctk.CTkFrame):
         self.app.show_frame(LoginPage)
         self.app.dispatcher.emit(Events.LOGOUT_CLICKED)
 
-    def _show_defeated_text(self):
+    def _attack_after(self):
+        self.is_animating_boss = False
+        self.canvas.itemconfig(self.character, image=self.character_frames[2 if self.boss_defeated else 0])
+
+    def _display_defeated_screen(self):
         self.canvas.create_text(304, 204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black",
                                 tags="defeat_text")
         self.canvas.create_text(300, 200, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="white",
                                 tags="defeat_text")
         self.canvas.create_text(300, 260, text="Get ready for the next boss...", font=("Arial", 20, "bold"),
                                 fill="white", tags="defeat_text")
+        self.canvas.delete("healthbar")
+        self.attack_button.configure(state=tk.DISABLED)
+        self.canvas.itemconfig(self.character, image=self.character_frames[2])
+
+    def _hide_defeated_screen(self):
+        self.canvas.delete("defeat_text")
+        self.attack_button.configure(state=tk.NORMAL)
 
     def _on_new_boss(self, game_state: ClientGameState):
         self.boss_defeated = True
+        self._display_defeated_screen()
         self.after(3000, lambda: self._init_new_boss(game_state))
 
     def _init_new_boss(self, game_state: ClientGameState):
-        self.canvas.delete("defeat_text")
+        self._hide_defeated_screen()
         self.boss_defeated = False
         self.update_frame(game_state)

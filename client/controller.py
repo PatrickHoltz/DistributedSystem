@@ -48,7 +48,6 @@ class ConnectionService(TCPClientConnection):
     def __init__(self, address: tuple[str, int], username: str, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
         super().__init__(address)
         self.dispatcher = dispatcher
-        #self.event_queue = event_queue
         self._client_game_state = client_game_state
         self._username: str = username
 
