@@ -1,7 +1,4 @@
-import socket
-import shared.data as data
-import shared.sockets as sockets
-from server_logic import ServerLoop
+from server_loop import ServerLoop
 
 
 if __name__ == '__main__':
