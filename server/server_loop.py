@@ -11,6 +11,7 @@ from shared.data import *
 class ServerLoop:
     """Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick."""
     MAX_MESSAGES_PER_TICK = 50
+    DEBUG = True
 
     def __init__(self):
         super().__init__()
@@ -36,51 +37,12 @@ class ServerLoop:
 
         self._next_hb = time.monotonic() + self.HEARTBEAT_INTERVAL
         self._last_leader_seen = time.monotonic()
+
+        print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
         self.run()
 
     def run(self):
-        hello_packet = Packet(ServerHello(uuid=self.server_uuid), tag=PacketTag.SERVER_HELLO)
-
-        #sends 3 times because UDP can drop packages
-        reply = None
-        broadcast_socket = None
-        for _ in range(3):
-            broadcast_socket = BroadcastSocket(
-                hello_packet,
-                response_handler=self.handle_leader_message,
-                broadcast_port=10002,
-                timeout_s= 1.0
-            )
-            broadcast_socket.start()
-
-            try:
-                reply = broadcast_socket.future.result(timeout=1.5)
-            except Exception:
-                reply = None
-
-            if reply is not None:
-                break
-
-            time.sleep(0.2)
-
-        if reply is None:
-            print("No leader. My UUID", self.server_uuid)
-            self.start_election()
-        else:
-            print("Answer received:", reply.tag, reply.content)
-            if reply.tag == PacketTag.COORDINATOR:
-                leader_uuid = reply.content["leader_uuid"]
-                self._accept_leader(leader_uuid)
-
-                #if im higher than
-                if UUID(self.server_uuid).int > UUID(leader_uuid).int:
-                    print("I have a higher uuid than leader start -> start Bully")
-                    self.start_election()
-
-            else:
-                print("I shouldn't get a replay -> start election")
-                self.start_election()
-
+        self.find_leader()
 
         while not self._is_stopped:
             now = time.monotonic()
@@ -107,6 +69,50 @@ class ServerLoop:
 
     def stop(self):
         self._is_stopped = True
+        
+    def find_leader(self):
+        hello_packet = Packet(ServerHello(uuid=self.server_uuid), tag=PacketTag.SERVER_HELLO, uuid=UUID(self.server_uuid).int)
+        
+        reply = None
+        broadcast_socket = None
+        for _ in range(3):  #sends 3 times because UDP can drop packages
+            # TODO: is this ok because also 3 packages can drop?
+            broadcast_socket = BroadcastSocket(
+                hello_packet,
+                response_handler=self.handle_leader_message,
+                broadcast_port=10002,
+                timeout_s= 1.0
+            )
+            broadcast_socket.start()
+
+            try:
+                reply = broadcast_socket.future.result(timeout=1.5)
+            except Exception:
+                reply = None
+
+            if reply is not None:
+                break
+
+            time.sleep(0.2)
+
+        if reply is None:
+            print(f"[SERVER][{self.server_uuid}] No leader found > starting election!")
+            self.start_election()
+        else:
+            if self.DEBUG:
+                print(f"[SERVER][{self.server_uuid}] Got Answer for leader search: ( {reply.tag} | {reply.content} )")
+                
+            if reply.tag == PacketTag.COORDINATOR:
+                leader_uuid = reply.content["leader_uuid"]
+                self._accept_leader(leader_uuid)
+
+                if UUID(self.server_uuid).int > UUID(leader_uuid).int: # higher uuid then leader
+                    print(f"[SERVER][{self.server_uuid}][BULLY] I have higher UUID > starting election!")
+                    self.start_election()
+            else:
+                # TODO: what does this mean -> is this just a error catch case or part of bully
+                print(f"[SERVER][{self.server_uuid}] I shouldn't get a replay > starting election!")
+                self.start_election()
     
     def multicast_packet(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""
@@ -161,45 +167,72 @@ class ServerLoop:
             return UUID(a).int > UUID(b).int
 
         match packet.tag:
-
-            # new Server asks: is there a leader
+            # new server asks: is there a leader
             case PacketTag.SERVER_HELLO:
-                sender_uuid = packet.content["uuid"]
+                if self.DEBUG:
+                    sender_uuid = packet.content["uuid"]
+                    print(f"[SERVER][{self.server_uuid}][BULLY] Received new server hello <{sender_uuid}>")
 
-                # If there is a leader send Coordinator
+                # if there is a leader send Coordinator
                 if self.leader_uuid is not None:
+                    if self.DEBUG:
+                        print(f"[SERVER][{self.server_uuid}][BULLY] Sending know leader UUID <{self.leader_uuid}>")
+
                     return Packet(
                         CoordinatorMessage(leader_uuid=self.leader_uuid),
-                        tag=PacketTag.COORDINATOR
+                        tag=PacketTag.COORDINATOR,
+                        uuid=UUID(self.server_uuid).int
                     )
 
-                # if i dont know leader or im the lader myself:
+                # if I dont know leader or I am the leader myself:
                 if self.is_leader:
+                    if self.DEBUG:
+                        print(f"[SERVER][{self.server_uuid}][BULLY] Sending know leader UUID <{self.server_uuid}> (myself)")
+
                     return Packet(
                         CoordinatorMessage(leader_uuid=self.server_uuid),
-                        tag=PacketTag.COORDINATOR
+                        tag=PacketTag.COORDINATOR,
+                        uuid=UUID(self.server_uuid).int
                     )
-                # start election else
-                return None
 
-                # Election larger id answers
+                return None # else start election
+
+            # election larger id answers
             case PacketTag.ELECTION:
                 candidate = packet.content["candidate_uuid"]
-                if gt(self.server_uuid, candidate):
-                    # to start leader selection simultaniously with sending ok back
-                    Thread(target=self.start_election, daemon=True).start()
-                    return Packet(OkMessage(responder_uuid=self.server_uuid), tag=PacketTag.OK)
 
-                # No answer smaller UUID
+                if self.DEBUG:
+                    print(f"[SERVER][{self.server_uuid}][BULLY] Received election candidate <{candidate}>")
+
+                if gt(self.server_uuid, candidate):
+                    # to start leader selection simultaneously with sending ok back
+                    if self.DEBUG:
+                        print(f"[SERVER][{self.server_uuid}][BULLY] UUID larger than mine > starting election + replying ok")            
+
+                    Thread(target=self.start_election, daemon=True).start()
+                    return Packet(
+                        OkMessage(responder_uuid=self.server_uuid), 
+                        tag=PacketTag.OK,
+                        uuid=UUID(self.server_uuid).int
+                    )
+
+                # no answer smaller UUID
                 return None
 
-            #announce new leader
+            # announce new leader
             case PacketTag.COORDINATOR:
                 leader_uuid = packet.content["leader_uuid"]
+
+                if self.DEBUG:
+                    print(f"[SERVER][{self.server_uuid}][BULLY] Received new leader <{leader_uuid}>")
+
                 self._accept_leader(leader_uuid)
 
-                # if im higher than announced leader. Imma take over
+                # if im higher than announced leader I will take over
                 if gt(self.server_uuid, leader_uuid):
+                    if self.DEBUG:
+                        print(f"[SERVER][{self.server_uuid}][BULLY] UUID smaller than mine > starting election")
+
                     Thread(target=self.start_election, daemon=True).start()
 
                 return None
@@ -207,12 +240,25 @@ class ServerLoop:
             # if leader lives: but leader has lower uuid than own uuid start new election
             case PacketTag.LEADER_HEARTBEAT:
                 leader_uuid = packet.content["leader_uuid"]
+                
+                if leader_uuid == self.server_uuid: # ignore message from myself
+                    return None
+
+                #if self.DEBUG:
+                #    print(f"[SERVER][{self.server_uuid}][BULLY] Received heartbeat from leader <{leader_uuid}>")
+
                 self._last_leader_seen = time.monotonic()
 
                 if self.leader_uuid != leader_uuid:
+                    if self.DEBUG:
+                        print(f"[SERVER][{self.server_uuid}][BULLY] UUID different > changing stored leader")
+
                     self._accept_leader(leader_uuid)
 
                 if gt(self.server_uuid, leader_uuid):
+                    if self.DEBUG:
+                        print(f"[SERVER][{self.server_uuid}][BULLY] UUID smaller than mine > starting election")
+
                     Thread(target=self.start_election, daemon=True).start()
 
                 return None
@@ -235,7 +281,7 @@ class ServerLoop:
         self.is_leader = (leader_uuid == self.server_uuid)
         self.election_in_progress = False
         self._last_leader_seen = time.monotonic()
-        print("Leader is:", self.leader_uuid, "me?", self.is_leader)
+        print(f"[SERVER][{self.server_uuid}][BULLY] Accepting leader <{self.leader_uuid}> {"(myself)" if self.is_leader else ""}")
 
     def _become_leader(self):
         self.leader_uuid = self.server_uuid
@@ -249,7 +295,7 @@ class ServerLoop:
             uuid=UUID(self.server_uuid).int
         )
         self._fire_broadcast(coord_packet, tries=3, timeout_s=0.25)
-        print("I am the new leader:", self.server_uuid)
+        print(f"[SERVER][{self.server_uuid}][BULLY] No one answered > declaring myself leader")
 
     def start_election(self):
         if self.election_in_progress:
@@ -264,9 +310,8 @@ class ServerLoop:
             uuid=UUID(self.server_uuid).int
         )
 
-        #send multiple times because of UDP
         ok_received = False
-        for _ in range(3):
+        for _ in range(3): # send multiple times because of UDP
             reply = self._broadcast_and_wait_one(election_packet, timeout_s=self.ELECTION_OK_WAIT)
             if reply is not None and reply.tag == PacketTag.OK:
                 ok_received = True
@@ -274,16 +319,16 @@ class ServerLoop:
             time.sleep(0.15)
 
         if not ok_received:
-            #nobody higher lives im leader
+            # nobody higher lives -> I am leader
             self._become_leader()
             return
 
-        # There is higher UUID wait for Cordinator
+        # there is a higher UUID wait for coordinator
         deadline = time.monotonic() + self.COORDINATOR_WAIT
         while time.monotonic() < deadline and self.leader_uuid is None:
             time.sleep(0.05)
 
-        # if nobody announces leader => new election
+        # if nobody announces leader -> new election
         if self.leader_uuid is None or self.is_leader:
             self.election_in_progress = False
             self.start_election()
