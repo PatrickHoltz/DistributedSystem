@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from queue import Queue
+from typing import Optional
 
 from client.events import UIEventDispatcher, Events
+from model import ClientGameState
 from shared.data import *
 from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPClientConnection
-import threading
-from typing import Optional
-from model import ClientGameState
 
 
 class LoginService:

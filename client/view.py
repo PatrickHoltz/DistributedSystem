@@ -3,16 +3,15 @@ from __future__ import annotations
 import os
 import random
 import tkinter as tk
+import uuid
 from ctypes import windll
-from os import stat_result
 from typing import cast
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from client.events import UIEventDispatcher, Events
-from model import Boss, ClientGameState
-import uuid
+from model import ClientGameState
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -79,7 +78,6 @@ class PlayerApp:
     def on_logged_in(self, game_state: ClientGameState):
         self.show_frame(GamePage)
         game_page: GamePage = cast(GamePage, self.frames[GamePage])
-        print("On logged in view")
         game_page.update_frame(game_state)
 
 
