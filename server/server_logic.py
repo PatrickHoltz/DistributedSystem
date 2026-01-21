@@ -70,12 +70,13 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: 'ServerLoop'):
+    def __init__(self, server_loop: 'ServerLoop', uuid: int = -1):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
         self.login_listener = BroadcastListener(
-            on_message=self.handle_login)
+            on_message=self.handle_login,
+            uuid=uuid)
         self.login_listener.start()
 
         self.server_loop = server_loop

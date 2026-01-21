@@ -36,17 +36,20 @@ class Packet:
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, length: int = 0):
+    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, uuid: int = -1, length: int = 0):
         """Content must be a dataclass"""
         self.content = content
-        self._length = length
         self.tag = tag
+        self.uuid = uuid
+        
+        self._length = length
 
     def _to_dictionary(self) -> dict[str, object]:
         if not is_dataclass(self.content):
             raise TypeError("Could not encode packet. Packet content must be a dataclass.")
         dictionary = dict()
         dictionary['tag'] = self.tag.value
+        dictionary['uuid'] = self.uuid
         dictionary['content'] = asdict(self.content)
         return dictionary
 
@@ -66,7 +69,7 @@ class Packet:
         """
         data_length = int.from_bytes(data[0:4])
         dictionary = json.loads(data[4:].decode())
-        return cls(dictionary['content'], PacketTag(dictionary["tag"]), data_length)
+        return cls(dictionary['content'], PacketTag(dictionary["tag"]), int(dictionary["uuid"]), data_length, )
 
 
 class UDPSocket(Thread):
@@ -150,8 +153,13 @@ class BroadcastSocket(Thread):
 class BroadcastListener(Thread):
     """A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function."""
 
-    def __init__(self, port: int = 10002, on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
-                 buffer_size: int = 65507):
+    def __init__(
+            self, 
+            port: int = 10002, 
+            on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
+            buffer_size: int = 65507,
+            uuid: int = -1
+    ):
         super().__init__(daemon=True)
 
         if on_message is None:
@@ -159,6 +167,7 @@ class BroadcastListener(Thread):
         if not callable(on_message):
             raise TypeError("on_message must be callable.")
 
+        self.uuid = uuid
         self.port = port
         self.on_message = on_message
         self.buffer_size = buffer_size
@@ -181,11 +190,6 @@ class BroadcastListener(Thread):
             while not self._stop_event.is_set():
                 try:
                     data, addr = sock.recvfrom(self.buffer_size)
-
-                    if addr[1] in self.blocked_ports and addr[0] == local_ip:
-                        # Ignoriere Nachrichten von blockierten Ports (eigener Broadcast)
-                        continue
-
                 except socket.timeout:
                     # oft checken, ob wir stoppen sollen
                     continue
@@ -199,8 +203,11 @@ class BroadcastListener(Thread):
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
-
-                # on_message could respond with None if no leader
+                
+                if self.uuid != -1 and self.uuid == content.uuid:
+                    # if uuid is provided then ignore msgs from myself
+                    continue
+                
                 response_packet: Packet = self.on_message(content, addr)
                 if response_packet:
                     sock.sendto(response_packet.encode(), addr)

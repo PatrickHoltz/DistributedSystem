@@ -17,7 +17,7 @@ class ServerLoop:
 
         self.server_uuid = str(uuid4())
 
-        self.connection_manager = ConnectionManager(self)
+        self.connection_manager = ConnectionManager(self, UUID(self.server_uuid).int)
         self.game_state_manager = GameStateManager()
 
         self._is_stopped = False
@@ -245,7 +245,8 @@ class ServerLoop:
 
         coord_packet = Packet(
             CoordinatorMessage(leader_uuid=self.server_uuid),
-            tag=PacketTag.COORDINATOR
+            tag=PacketTag.COORDINATOR,
+            uuid=UUID(self.server_uuid).int
         )
         self._fire_broadcast(coord_packet, tries=3, timeout_s=0.25)
         print("I am the new leader:", self.server_uuid)
@@ -259,7 +260,8 @@ class ServerLoop:
 
         election_packet = Packet(
             ElectionMessage(candidate_uuid=self.server_uuid),
-            tag=PacketTag.ELECTION
+            tag=PacketTag.ELECTION,
+            uuid=UUID(self.server_uuid).int
         )
 
         #send multiple times because of UDP
