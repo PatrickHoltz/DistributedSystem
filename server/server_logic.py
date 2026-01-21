@@ -13,10 +13,11 @@ class GameStateManager:
 
     def __init__(self):
         self._game_state = GameStateData(players={}, boss=self._create_boss(1))
+        self.latest_damage_numbers: list[int] = []
 
     @classmethod
     def _create_boss(cls, stage: int) -> BossData:
-        health = 100 + stage * 10
+        health = 100 + (stage - 1) * 20
         return BossData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
 
     def apply_attack(self, username: str):
@@ -26,6 +27,7 @@ class GameStateManager:
         if username in self._game_state.players:
             damage = self._game_state.players[username].damage
             self._game_state.boss.health -= damage
+            self.latest_damage_numbers.append(damage)
             boss_defeated = self._game_state.boss.health <= 0
             if boss_defeated:
                 print("Boss defeated. Advancing to next stage.")
@@ -54,7 +56,8 @@ class GameStateManager:
         return PlayerGameStateData(
             boss=self._game_state.boss,
             player_count=self.get_online_player_count(),
-            player=self._game_state.players[username]
+            player=self._game_state.players[username],
+            latest_damages=self.latest_damage_numbers
         )
 
     def get_boss(self) -> BossData:
@@ -193,6 +196,9 @@ class ServerLoop:
 
         while not self._is_stopped:
             now = time.monotonic()
+
+            # reset damage numbers for next loop iteration
+            self.game_state_manager.latest_damage_numbers = []
 
             self._process_incoming_messages()
             self._update_game_states()

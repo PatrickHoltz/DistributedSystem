@@ -18,4 +18,8 @@ if __name__ == "__main__":
 
     dispatcher.start()
 
-    tk_root.mainloop()
+    try:
+        tk_root.mainloop()
+    except (KeyboardInterrupt, SystemExit):
+        print("Stopping gracefully...")
+        tk_root.destroy()

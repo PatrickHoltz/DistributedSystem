@@ -65,7 +65,7 @@ class ConnectionService(TCPClientConnection):
             if packet.tag == PacketTag.PLAYER_GAME_STATE:
                 game_state = PlayerGameStateData.from_dict(packet.content)
                 self._client_game_state.update(game_state)
-                self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state)
+                self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
                 return
 
             if packet.tag == PacketTag.NEW_BOSS:
@@ -123,7 +123,7 @@ class GameController:
         """Callback for when the attack button is clicked."""
         self.client_game_state.attack_boss()
         self._connection_service.send_attack()
-        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state)
+        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, [])
         return self.client_game_state.boss
 
     def on_logout_clicked(self):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import random
 import tkinter as tk
 from ctypes import windll
 from os import stat_result
@@ -11,7 +12,7 @@ from PIL import Image, ImageTk
 
 from client.events import UIEventDispatcher, Events
 from model import Boss, ClientGameState
-from shared.data import PlayerGameStateData
+import uuid
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -131,6 +132,7 @@ class GamePage(ctk.CTkFrame):
         self.app = app
         self.boss_defeated = False
         self.is_animating_boss = False
+        self.active_damage_numbers: dict[str, int] = {}
 
         self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
         self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
@@ -144,7 +146,9 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_image(0, 0, image=self.bg_img, anchor="nw")
         self.character = self.canvas.create_image(
             0, 0, image=self.character_frames[0], anchor="nw", tag="character")
-        self._update_health_bar(self.canvas)
+        self._update_health_bar()
+
+        self._render_damage_number(30)
 
         # Foreground elements
         # Top bar with level and player count info
@@ -170,7 +174,7 @@ class GamePage(ctk.CTkFrame):
                                            fg_color="red4", hover_color="red3", command=self._on_logout_pressed)
         self.logout_button.place(anchor="se", relx=1.0, rely=1.0)
 
-    def update_frame(self, game_state: ClientGameState):
+    def update_frame(self, game_state: ClientGameState, damage_numbers=None):
         """Updates the GamePage with the provided game state."""
         if self.boss_defeated:
             return
@@ -178,7 +182,11 @@ class GamePage(ctk.CTkFrame):
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
         self.boss_name_label.configure(text=game_state.boss.name)
-        self._update_health_bar(self.canvas, game_state.boss.health, game_state.boss.max_health)
+        self._update_health_bar(game_state.boss.health, game_state.boss.max_health)
+
+        if damage_numbers:
+            for n in damage_numbers:
+                self._render_damage_number(n)
 
         if not self.is_animating_boss:
             self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
@@ -188,9 +196,9 @@ class GamePage(ctk.CTkFrame):
             self.boss_defeated = True
 
 
-    def _update_health_bar(self, canvas: tk.Canvas, health=100, max_health=100):
+    def _update_health_bar(self, health=100, max_health=100):
         """Destroys the old health bar and creates a new one based on the boss's current health."""
-        canvas.delete("healthbar")
+        self.canvas.delete("healthbar")
         text_id = self.canvas.create_text(450, 150, text=f"Health: {health}", font=("Arial", 22, "bold"), fill="white",
                                           width=200, tags="healthbar")
         bbox = self.canvas.bbox(text_id)
@@ -205,7 +213,27 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_rectangle(x1 - padx, y1 - pady, x2 + padx, y2 + pady, width=4, tags="healthbar")
 
         # Fix ordering
-        canvas.tag_raise(text_id, health_rect_id)
+        self.canvas.tag_raise(text_id, health_rect_id)
+
+    def _render_damage_number(self, damage: int):
+        number_id: str = str(uuid.uuid4())
+        x = random.randrange(80, 300)
+        y = random.randrange(80, 250)
+        self.canvas.create_text(x, y, text=f"{damage}", font=("Arial", 30), fill="orange red", tags=number_id)
+        self._number_animation(number_id)
+
+    def _number_animation(self, number_id: str):
+        n_frames = 40
+        for i in range(1, n_frames):
+            size = n_frames - i
+            self.after(i * 50,
+                       lambda ida, s: self.canvas.itemconfig(ida, font=("Arial", s)),
+                       number_id, size)
+        self.after(50*n_frames, lambda: self.canvas.delete(number_id))
+
+    def test(self, number_id: str, i: int = 1):
+        print("hello")
+        self.canvas.itemconfig(number_id, font=("Arial", 20 + 2*i))
 
     def on_show(self):
         """Called when GamePage becomes visible. Bind the space key at root level."""
