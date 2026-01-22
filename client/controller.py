@@ -95,6 +95,16 @@ class ConnectionService(TCPClientConnection):
         self.send(packet)
         print("You are logged out now.")
 
+    def send_logout_on_close(self):
+        try:
+            self.send_logout()
+
+            if self.socket:
+                self._send_queued_packets(self.socket)
+
+        finally:
+            self.stop()
+            
 
 class GameController:
     def __init__(self, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
@@ -127,5 +137,17 @@ class GameController:
     def on_logout_clicked(self):
         if self._connection_service:
             self._connection_service.send_logout()
+        self.client_game_state.player.logged_in = False
+        self.dispatcher.emit(Events.LOGGED_OUT)
+
+    def shutdown_on_close(self):
+        if self._connection_service:
+            try:
+                self._connection_service.send_logout_on_close()
+            except Exception as e:
+                print("Shutdown failed:", e)
+            finally:
+                self._connection_service = None
+
         self.client_game_state.player.logged_in = False
         self.dispatcher.emit(Events.LOGGED_OUT)

@@ -18,7 +18,7 @@ if __name__ == "__main__":
     dispatcher.start()
 
     def on_close_window():
-        game_controller.on_logout_clicked()
+        game_controller.shutdown_on_close()
         tk_root.destroy()
     tk_root.protocol("WM_DELETE_WINDOW", on_close_window)
 

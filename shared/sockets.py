@@ -271,6 +271,13 @@ class _TCPConnection:
 
     def stop(self):
         self._stop_event.set()
+
+        #to stop the waiting for a package and it gets one immediatly
+        try:
+            self._send_queue.put_nowait(None)
+        except Exception:
+            pass
+
         if self.socket:
             try:
                 self.socket.shutdown(socket.SHUT_RDWR)
@@ -302,15 +309,23 @@ class _TCPConnection:
     def sender(self, conn: socket.socket):
         while not self._stop_event.is_set():
             packet: Packet = self._send_queue.get()
-            conn.sendall(packet.encode())
+            if packet is None:
+                break
+            try:
+                conn.sendall(packet.encode())
+            except OSError:
+                break
 
     def receiver(self, conn: socket.socket):
         while not self._stop_event.is_set():
             try:
                 packet = self._recv_packet(conn)
                 self._handle_packet(packet)
-            except ConnectionError:
-                self.socket.close()
+            except (ConnectionError, OSError):
+                try:
+                    conn.close()
+                except OSError:
+                    pass
                 break
 
     def _handle_packet(self, packet: Packet):

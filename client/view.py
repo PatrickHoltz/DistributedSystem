@@ -229,10 +229,6 @@ class GamePage(ctk.CTkFrame):
                        number_id, size)
         self.after(50*n_frames, lambda: self.canvas.delete(number_id))
 
-    def test(self, number_id: str, i: int = 1):
-        print("hello")
-        self.canvas.itemconfig(number_id, font=("Arial", 20 + 2*i))
-
     def on_show(self):
         """Called when GamePage becomes visible. Bind the space key at root level."""
         try:
