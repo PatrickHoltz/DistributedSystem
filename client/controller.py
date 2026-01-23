@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from client.events import UIEventDispatcher, Events
+from model import ClientGameState
 from shared.data import *
 from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPClientConnection
-import threading
-from typing import Optional
-from model import ClientGameState
 
 
 class LoginService:
@@ -63,7 +63,7 @@ class ConnectionService(TCPClientConnection):
             if packet.tag == PacketTag.PLAYER_GAME_STATE:
                 game_state = PlayerGameStateData.from_dict(packet.content)
                 self._client_game_state.update(game_state)
-                self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state)
+                self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
                 return
 
             if packet.tag == PacketTag.NEW_BOSS:
@@ -95,6 +95,17 @@ class ConnectionService(TCPClientConnection):
         self.send(packet)
         print("You are logged out now.")
 
+    def send_logout_now(self):
+        if not self.socket:
+            return
+        logout_data = LoginData(self._username)
+        pkt = Packet(logout_data, tag=PacketTag.LOGOUT)
+        try:
+            self.socket.sendall(pkt.encode())
+            print("Logout sent now.")
+        except OSError as e:
+            print("Could not send logout:", e)
+
 
 class GameController:
     def __init__(self, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
@@ -116,14 +127,27 @@ class GameController:
         self.client_game_state.update(login_reply.game_state)
         self.dispatcher.emit(Events.LOGGED_IN, self.client_game_state)
 
+
     def on_attack_clicked(self):
+        """Callback for when the attack button is clicked."""
         self.client_game_state.attack_boss()
         self._connection_service.send_attack()
-        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state)
+        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, [])
         return self.client_game_state.boss
 
     def on_logout_clicked(self):
         if self._connection_service:
             self._connection_service.send_logout()
+        self.client_game_state.player.logged_in = False
+        self.dispatcher.emit(Events.LOGGED_OUT)
+
+    def shutdown_on_close(self):
+        if self._connection_service:
+            try:
+                self._connection_service.send_logout_now()
+            finally:
+                self._connection_service.stop()
+                self._connection_service = None
+
         self.client_game_state.player.logged_in = False
         self.dispatcher.emit(Events.LOGGED_OUT)

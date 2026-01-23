@@ -31,13 +31,15 @@ class PlayerGameStateData:
     boss: BossData
     player: PlayerData
     player_count: int
+    latest_damages: list[int]
 
     @classmethod
     def from_dict(cls, data: dict):
         boss_data = BossData(**data['boss'])
         player_data = PlayerData(**data['player'])
         player_count = data['player_count']
-        return cls(boss=boss_data, player=player_data, player_count=player_count)
+        latest_damages = data['latest_damages']
+        return cls(boss=boss_data, player=player_data, player_count=player_count, latest_damages=latest_damages)
 
 @dataclass
 class LoginReplyData:

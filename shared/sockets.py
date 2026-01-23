@@ -213,7 +213,7 @@ class BroadcastListener(Thread):
             return s.getsockname()[0]
 
 
-class _TCPConnection():
+class _TCPConnection:
     """An abstract TCP connection which can be used for both sending and receiving packets."""
 
     T = TypeVar('T')
@@ -233,7 +233,9 @@ class _TCPConnection():
         self.socket: Optional[socket.socket] = None
 
     @classmethod
-    def _recv_exact(cls, n_bytes: int, conn: socket.socket):
+    def _recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
+        old_timeout = conn.gettimeout()
+        conn.settimeout(timeout_s)
         data = b""
         while len(data) < n_bytes:
             chunk = conn.recv(n_bytes - len(data))
@@ -241,6 +243,7 @@ class _TCPConnection():
                 conn.close()
                 raise ConnectionError("connection closed")
             data += chunk
+        conn.settimeout(old_timeout)
         return data
 
     @classmethod
@@ -268,6 +271,13 @@ class _TCPConnection():
 
     def stop(self):
         self._stop_event.set()
+
+        #to stop the waiting for a package and it gets one immediatly
+        try:
+            self._send_queue.put_nowait(None)
+        except Exception:
+            pass
+
         if self.socket:
             try:
                 self.socket.shutdown(socket.SHUT_RDWR)
@@ -280,6 +290,8 @@ class _TCPConnection():
 
 
     def _recv_packet(self, sock: socket.socket) -> Packet:
+        """Blocks until a full packet is received from the socket.
+        """
         length_bytes = self._recv_exact(4, sock)
         data_length = struct.unpack('!I', length_bytes)[0]
         json_bytes = self._recv_exact(data_length, sock)
@@ -293,6 +305,28 @@ class _TCPConnection():
                 conn.sendall(packet.encode())
         except queue.Empty:
             pass
+
+    def sender(self, conn: socket.socket):
+        while not self._stop_event.is_set():
+            packet: Packet = self._send_queue.get()
+            if packet is None:
+                break
+            try:
+                conn.sendall(packet.encode())
+            except OSError:
+                break
+
+    def receiver(self, conn: socket.socket):
+        while not self._stop_event.is_set():
+            try:
+                packet = self._recv_packet(conn)
+                self._handle_packet(packet)
+            except (ConnectionError, OSError):
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                break
 
     def _handle_packet(self, packet: Packet):
         raise NotImplementedError("Subclasses must implement _handle_packet method.")
@@ -321,31 +355,20 @@ class TCPClientConnection(_TCPConnection, Thread):
             self.socket.settimeout(0.1)
             print("Connected to server at ", self.address)
             print("TCP client address: ", self.socket.getsockname())
+
+            # Start sender and receiver threads
+            sender = Thread(target=self.sender, args=(self.socket,),daemon=True)
+            receiver = Thread(target=self.receiver, args=(self.socket,),daemon=True)
+            sender.start()
+            receiver.start()
+
+            sender.join()
+            receiver.join()
+            self.socket.close()
         except Exception:
             # Could not connect, exit thread
             print("Could not connect to server at ", self.address)
-            return
-
-        try:
-            while not self._stop_event.is_set():
-                # Send queued packets
-                self._send_queued_packets(self.socket)
-
-                # Read one incoming packet if available
-                try:
-                    packet = self._recv_packet(self.socket)
-                    self._handle_packet(packet)
-                except socket.timeout:
-                    # no data available right now
-                    continue
-                except ConnectionError:
-                    # connection closed by peer
-                    break
-        finally:
-            try:
-                self.socket.close()
-            except OSError:
-                pass
+            self.socket.close()
 
 
 class TCPServerConnection(_TCPConnection, mp.Process):
@@ -381,27 +404,15 @@ class TCPServerConnection(_TCPConnection, mp.Process):
         conn, client_address = self.socket.accept()
         print("TCP connection established with ", client_address)
 
-        self.socket.settimeout(1.0)
-        try:
-            while not self._stop_event.is_set():
-                # Wait for a connection
+        # Start sender and receiver threads
+        sender = Thread(target=self.sender, args=(conn,),daemon=True)
+        receiver = Thread(target=self.receiver, args=(conn,),daemon=True)
 
+        sender.start()
+        receiver.start()
+        sender.join()
+        sender.join()
 
-                # Send outgoing packets
-                self._send_queued_packets(conn)
-
-                # Read a single incoming packet (if available)
-                try:
-                    packet = self._recv_packet(conn)
-                    self._handle_packet(packet)
-                except ConnectionError:
-                    conn.close()
-                    conn = None
-                except socket.timeout:
-                    # no new packet available
-                    pass
-
-        finally:
-            if conn is not None:
-                conn.close()
-            self.socket.close()
+        if conn is not None:
+            conn.close()
+        self.socket.close()
