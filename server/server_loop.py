@@ -11,6 +11,10 @@ from shared.data import *
 class ServerLoop:
     """Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick."""
     MAX_MESSAGES_PER_TICK = 50
+
+    BULLY_HEARTBEAT_INTERVAL = 2.0
+    BULLY_HEARTBEAT_TIMEOUT = 6.0
+
     DEBUG = True
 
     def __init__(self):
@@ -30,12 +34,7 @@ class ServerLoop:
         self.is_leader: bool = False
         self.election_in_progress: bool = False
 
-        self.HEARTBEAT_INTERVAL = 2.0
-        self.HEARTBEAT_TIMEOUT = 6.0
-        self.ELECTION_OK_WAIT = 1.0
-        self.COORDINATOR_WAIT = 3.0
-
-        self._next_hb = time.monotonic() + self.HEARTBEAT_INTERVAL
+        self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
         self._last_leader_seen = time.monotonic()
 
         print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
@@ -55,14 +54,14 @@ class ServerLoop:
 
             # follower: leader timeout => election
             if not self.is_leader and self.leader_uuid is not None:
-                if now - self._last_leader_seen > self.HEARTBEAT_TIMEOUT:
+                if now - self._last_leader_seen > self.BULLY_HEARTBEAT_TIMEOUT:
                     self.leader_uuid = None
                     self.start_election()
 
             # leader sends heartbeat
             if self.is_leader and now >= self._next_hb:
-                self._next_hb += self.HEARTBEAT_INTERVAL
-                hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.LEADER_HEARTBEAT)
+                self._next_hb += self.BULLY_HEARTBEAT_INTERVAL
+                hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
                 self._fire_broadcast(hb, tries=1, timeout_s=0.15)
 
             time.sleep(self.tick_rate)
@@ -102,7 +101,7 @@ class ServerLoop:
             #if self.DEBUG:
             #    print(f"[SERVER][{self.server_uuid}] Got Answer for leader search: ( {reply.tag} | {reply.content} )")
                 
-            if reply.tag == PacketTag.COORDINATOR:
+            if reply.tag == PacketTag.BULLY_COORDINATOR:
                 leader_uuid = reply.content["leader_uuid"]
                 self._accept_leader(leader_uuid)
 
@@ -180,7 +179,7 @@ class ServerLoop:
 
                     return Packet(
                         CoordinatorMessage(leader_uuid=self.leader_uuid),
-                        tag=PacketTag.COORDINATOR,
+                        tag=PacketTag.BULLY_COORDINATOR,
                         uuid=UUID(self.server_uuid).int
                     )
 
@@ -191,14 +190,14 @@ class ServerLoop:
 
                     return Packet(
                         CoordinatorMessage(leader_uuid=self.server_uuid),
-                        tag=PacketTag.COORDINATOR,
+                        tag=PacketTag.BULLY_COORDINATOR,
                         uuid=UUID(self.server_uuid).int
                     )
 
                 return None # else start election
 
             # election larger id answers
-            case PacketTag.ELECTION:
+            case PacketTag.BULLY_ELECTION:
                 candidate = packet.content["candidate_uuid"]
 
                 if self.DEBUG:
@@ -212,7 +211,7 @@ class ServerLoop:
                     Thread(target=self.start_election, daemon=True).start()
                     return Packet(
                         OkMessage(responder_uuid=self.server_uuid), 
-                        tag=PacketTag.OK,
+                        tag=PacketTag.BULLY_OK,
                         uuid=UUID(self.server_uuid).int
                     )
 
@@ -220,7 +219,7 @@ class ServerLoop:
                 return None
 
             # announce new leader
-            case PacketTag.COORDINATOR:
+            case PacketTag.BULLY_COORDINATOR:
                 leader_uuid = packet.content["leader_uuid"]
 
                 if self.DEBUG:
@@ -238,7 +237,7 @@ class ServerLoop:
                 return None
 
             # if leader lives: but leader has lower uuid than own uuid start new election
-            case PacketTag.LEADER_HEARTBEAT:
+            case PacketTag.BULLY_LEADER_HEARTBEAT:
                 leader_uuid = packet.content["leader_uuid"]
                 
                 if leader_uuid == self.server_uuid: # ignore message from myself
@@ -291,7 +290,7 @@ class ServerLoop:
 
         coord_packet = Packet(
             CoordinatorMessage(leader_uuid=self.server_uuid),
-            tag=PacketTag.COORDINATOR,
+            tag=PacketTag.BULLY_COORDINATOR,
             uuid=UUID(self.server_uuid).int
         )
         self._fire_broadcast(coord_packet, tries=3, timeout_s=0.25)
@@ -307,14 +306,14 @@ class ServerLoop:
 
         election_packet = Packet(
             ElectionMessage(candidate_uuid=self.server_uuid),
-            tag=PacketTag.ELECTION,
+            tag=PacketTag.BULLY_ELECTION,
             uuid=UUID(self.server_uuid).int
         )
 
         ok_received = False
         for _ in range(3): # send multiple times because of UDP
             reply = self._broadcast_and_wait_one(election_packet, timeout_s=self.ELECTION_OK_WAIT)
-            if reply is not None and reply.tag == PacketTag.OK:
+            if reply is not None and reply.tag == PacketTag.BULLY_OK:
                 ok_received = True
                 break
             time.sleep(0.15)

@@ -27,10 +27,10 @@ class PacketTag(StrEnum):
     LOGIN_REPLY = "login_reply"
 
     #Bully
-    ELECTION = "election"
-    OK = "ok"
-    COORDINATOR = "coordinator"
-    LEADER_HEARTBEAT = "leader_heartbeat"
+    BULLY_ELECTION = "election"
+    BULLY_OK = "ok"
+    BULLY_COORDINATOR = "coordinator"
+    BULLY_LEADER_HEARTBEAT = "leader_heartbeat"
 
 class Packet:
     """Basic packet for client-server communication.
