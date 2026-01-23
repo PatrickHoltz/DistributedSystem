@@ -32,6 +32,10 @@ class PacketTag(StrEnum):
     BULLY_COORDINATOR = "coordinator"
     BULLY_LEADER_HEARTBEAT = "leader_heartbeat"
 
+    # Gossip 
+    GOSSIP_DAMAGE = "gossip_damage"
+    GOSSIP_BOSS_SYNC = "gossip_boss_sync"
+
 class Packet:
     """Basic packet for client-server communication.
     """
