@@ -1,4 +1,5 @@
 import multiprocessing as mp
+
 import time
 import uuid
 
@@ -72,12 +73,13 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: 'ServerLoop'):
+    def __init__(self, server_loop: 'ServerLoop', uuid: int = -1):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
         self.login_listener = BroadcastListener(
-            on_message=self.handle_login)
+            on_message=self.handle_login,
+            uuid=uuid)
         self.login_listener.start()
 
         self.server_loop = server_loop
@@ -135,6 +137,16 @@ class ConnectionManager:
 
     def handle_login(self, packet: Packet, address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
+        
+        #leader messages
+        if packet.tag in {
+            PacketTag.SERVER_HELLO,
+            PacketTag.BULLY_ELECTION,
+            PacketTag.BULLY_OK,
+            PacketTag.BULLY_COORDINATOR,
+            PacketTag.BULLY_LEADER_HEARTBEAT,
+        }:
+            return self.server_loop.handle_leader_message(packet, address)
 
         if packet.tag == PacketTag.LOGIN:
             try:
@@ -153,117 +165,6 @@ class ConnectionManager:
             except TypeError as e:
                 print("Invalid login data received.", e)
         return None
-
-
-class ServerLoop:
-    """Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick."""
-    MAX_MESSAGES_PER_TICK = 50
-
-    def __init__(self):
-        super().__init__()
-        self.server_uuid = str(uuid.uuid4())
-
-        self.connection_manager = ConnectionManager(self)
-        self.game_state_manager = GameStateManager()
-
-        self._is_stopped = False
-        self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
-        self.out_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
-        self.tick_rate = 0.1  # ticks per second
-
-        self.run()
-
-    def run(self):
-        hello_packet = Packet(ServerHello(uuid=self.server_uuid), tag=PacketTag.SERVER_HELLO)
-
-        # sends 3 times because UDP can drop packages
-        broadcast_socket = None
-        for _ in range(3):
-            broadcast_socket = BroadcastSocket(
-                hello_packet,
-                response_handler=self.handle_leader_message,
-                broadcast_port=10002,
-                timeout_s= 1.0)
-            broadcast_socket.start()
-            time.sleep(0.2)
-
-        reply = broadcast_socket.future.result(timeout=2.0)
-        if reply is None:
-            print("———————————NO LEADER?———————————\n⠀⣞⢽⢪⢣⢣⢣⢫⡺⡵⣝⡮⣗⢷⢽⢽⢽⣮⡷⡽⣜⣜⢮⢺⣜⢷⢽⢝⡽⣝\n⠸⡸⠜⠕⠕⠁⢁⢇⢏⢽⢺⣪⡳⡝⣎⣏⢯⢞⡿⣟⣷⣳⢯⡷⣽⢽⢯⣳⣫⠇\n⠀⠀⢀⢀⢄⢬⢪⡪⡎⣆⡈⠚⠜⠕⠇⠗⠝⢕⢯⢫⣞⣯⣿⣻⡽⣏⢗⣗⠏⠀\n⠀⠪⡪⡪⣪⢪⢺⢸⢢⢓⢆⢤⢀⠀⠀⠀⠀⠈⢊⢞⡾⣿⡯⣏⢮⠷⠁⠀⠀\n⠀⠀⠀⠈⠊⠆⡃⠕⢕⢇⢇⢇⢇⢇⢏⢎⢎⢆⢄⠀⢑⣽⣿⢝⠲⠉⠀⠀⠀⠀\n⠀⠀⠀⠀⠀⡿⠂⠠⠀⡇⢇⠕⢈⣀⠀⠁⠡⠣⡣⡫⣂⣿⠯⢪⠰⠂⠀⠀⠀⠀\n⠀⠀⠀⠀⡦⡙⡂⢀⢤⢣⠣⡈⣾⡃⠠⠄⠀⡄⢱⣌⣶⢏⢊⠂⠀⠀⠀⠀⠀⠀\n⠀⠀⠀⠀⢝⡲⣜⡮⡏⢎⢌⢂⠙⠢⠐⢀⢘⢵⣽⣿⡿⠁⠁⠀⠀⠀⠀⠀⠀⠀\n⠀⠀⠀⠀⠨⣺⡺⡕⡕⡱⡑⡆⡕⡅⡕⡜⡼⢽⡻⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n⠀⠀⠀⠀⣼⣳⣫⣾⣵⣗⡵⡱⡡⢣⢑⢕⢜⢕⡝⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n⠀⠀⠀⣴⣿⣾⣿⣿⣿⡿⡽⡑⢌⠪⡢⡣⣣⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n⠀⠀⠀⡟⡾⣿⢿⢿⢵⣽⣾⣼⣘⢸⢸⣞⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n⠀⠀⠀⠀⠁⠇⠡⠩⡫⢿⣝⡻⡮⣒⢽⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n—————————————————————————————\n")
-            print("My UUID", self.server_uuid)
-        else:
-            print("Answer received:", reply.tag, reply.content)
-
-        while not self._is_stopped:
-            now = time.monotonic()
-
-            # reset damage numbers for next loop iteration
-            self.game_state_manager.latest_damage_numbers = []
-
-            self._process_incoming_messages()
-            self._update_game_states()
-            self._send_outgoing_messages()
-
-            #self.connection_manager.tick_client_heartbeat(now)
-
-            time.sleep(self.tick_rate)
-
-    def stop(self):
-        self._is_stopped = True
-    
-    def multicast_packet(self, packet: Packet):
-        """Writes a given packet into the outgoing queue for all connected clients."""
-        for username in self.connection_manager.active_connections.keys():
-            self.out_queue.put((username, packet))
-
-    def _update_game_states(self):
-        """Writes game state updates for all connected clients into the outgoing queue."""
-        for username in self.connection_manager.active_connections.keys():
-            game_state_update = self.game_state_manager.get_player_state(username)
-            self.out_queue.put((username, Packet(game_state_update, tag=PacketTag.PLAYER_GAME_STATE)))
-
-    def _process_incoming_messages(self):
-        processed = 0
-        while not self.in_queue.empty() and processed < self.MAX_MESSAGES_PER_TICK:
-            username, packet = self.in_queue.get()
-            processed += 1
-
-            self.connection_manager.mark_seen(username)
-
-            match packet.tag:
-                case PacketTag.CLIENT_PONG:
-                    pass
-
-                case PacketTag.CLIENT_PING:
-                    self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
-
-                case PacketTag.ATTACK:
-                    boss_defeated = self.game_state_manager.apply_attack(username)
-                    if boss_defeated:
-                        new_boss = self.game_state_manager.get_boss()
-                        self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
-
-                case PacketTag.LOGOUT:
-                    self.connection_manager.remove_connection(username)
-                    self.game_state_manager.logout_player(username)
-                    print(f"Player '{username}' logged out.")
-                case _:
-                    pass
-
-    def _send_outgoing_messages(self):
-        processed = 0
-        while not self.out_queue.empty() and processed < self.MAX_MESSAGES_PER_TICK:
-            username, packet = self.out_queue.get()
-            if username in self.connection_manager.active_connections:
-                communicator = self.connection_manager.active_connections[username]
-                communicator.send(packet)
-            processed += 1
-
-    def handle_leader_message(self, packet: Packet, address: tuple[str, int]):
-        """TODO"""
-        pass
-    
-
 
 class ClientCommunicator(TCPServerConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.

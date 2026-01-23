@@ -67,3 +67,20 @@ class AttackData:
 @dataclass
 class ServerHello:
     uuid: str
+
+@dataclass
+class ElectionMessage:
+    candidate_uuid: str
+
+@dataclass
+class OkMessage:
+    responder_uuid: str
+
+@dataclass
+class CoordinatorMessage:
+    leader_uuid: str
+
+@dataclass
+class LeaderHeartbeat:
+    leader_uuid: str
+
