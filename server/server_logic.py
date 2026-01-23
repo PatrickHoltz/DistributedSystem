@@ -141,10 +141,10 @@ class ConnectionManager:
         #leader messages
         if packet.tag in {
             PacketTag.SERVER_HELLO,
-            PacketTag.ELECTION,
-            PacketTag.OK,
-            PacketTag.COORDINATOR,
-            PacketTag.LEADER_HEARTBEAT,
+            PacketTag.BULLY_ELECTION,
+            PacketTag.BULLY_OK,
+            PacketTag.BULLY_COORDINATOR,
+            PacketTag.BULLY_LEADER_HEARTBEAT,
         }:
             return self.server_loop.handle_leader_message(packet, address)
 

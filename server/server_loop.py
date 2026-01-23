@@ -14,6 +14,8 @@ class ServerLoop:
 
     BULLY_HEARTBEAT_INTERVAL = 2.0
     BULLY_HEARTBEAT_TIMEOUT = 6.0
+    BULLY_ELECTION_OK_WAIT = 1.0
+    BULLY_COORDINATOR_WAIT = 3.0
 
     DEBUG = True
 
@@ -45,6 +47,9 @@ class ServerLoop:
 
         while not self._is_stopped:
             now = time.monotonic()
+            
+            # reset damage numbers for next loop iteration
+            self.game_state_manager.latest_damage_numbers = []
 
             self._process_incoming_messages()
             self._update_game_states()
@@ -312,7 +317,7 @@ class ServerLoop:
 
         ok_received = False
         for _ in range(3): # send multiple times because of UDP
-            reply = self._broadcast_and_wait_one(election_packet, timeout_s=self.ELECTION_OK_WAIT)
+            reply = self._broadcast_and_wait_one(election_packet, timeout_s=self.BULLY_ELECTION_OK_WAIT)
             if reply is not None and reply.tag == PacketTag.BULLY_OK:
                 ok_received = True
                 break
@@ -324,7 +329,7 @@ class ServerLoop:
             return
 
         # there is a higher UUID wait for coordinator
-        deadline = time.monotonic() + self.COORDINATOR_WAIT
+        deadline = time.monotonic() + self.BULLY_COORDINATOR_WAIT
         while time.monotonic() < deadline and self.leader_uuid is None:
             time.sleep(0.05)
 
