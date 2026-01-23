@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import random
 import tkinter as tk
+import uuid
 from ctypes import windll
 from typing import cast
 
@@ -9,8 +11,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from client.events import UIEventDispatcher, Events
-from model import Boss, ClientGameState
-from shared.data import PlayerGameStateData
+from model import ClientGameState
 
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
@@ -128,6 +129,8 @@ class GamePage(ctk.CTkFrame):
         self.root = master
         self.app = app
         self.boss_defeated = False
+        self.is_animating_boss = False
+        self.active_damage_numbers: dict[str, int] = {}
 
         self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
         self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
@@ -141,7 +144,7 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_image(0, 0, image=self.bg_img, anchor="nw")
         self.character = self.canvas.create_image(
             0, 0, image=self.character_frames[0], anchor="nw", tag="character")
-        self._update_health_bar(self.canvas)
+        self._update_health_bar()
 
         # Foreground elements
         # Top bar with level and player count info
@@ -167,27 +170,31 @@ class GamePage(ctk.CTkFrame):
                                            fg_color="red4", hover_color="red3", command=self._on_logout_pressed)
         self.logout_button.place(anchor="se", relx=1.0, rely=1.0)
 
-    def update_frame(self, game_state: ClientGameState):
+    def update_frame(self, game_state: ClientGameState, damage_numbers=None):
         """Updates the GamePage with the provided game state."""
         if self.boss_defeated:
             return
-        print(f"Updating GamePage, health={game_state.boss.health}")
-        self.canvas.itemconfig(self.character, image=self.character_frames[0])
+
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
         self.boss_name_label.configure(text=game_state.boss.name)
-        self._update_health_bar(self.canvas, game_state.boss.health, game_state.boss.max_health)
-        self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
-        if game_state.boss.is_dead() and not self.boss_defeated:
-            self._show_defeated_text()
-            self.boss_defeated = True
-        elif not game_state.boss.is_dead() and self.boss_defeated:
-            self.canvas.delete("defeat_text")
-            self.boss_defeated = False
+        self._update_health_bar(game_state.boss.health, game_state.boss.max_health)
 
-    def _update_health_bar(self, canvas: tk.Canvas, health=100, max_health=100):
+        if damage_numbers:
+            for n in damage_numbers:
+                self._render_damage_number(n)
+
+        if not self.is_animating_boss:
+            self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
+
+        if game_state.boss.is_dead():
+            self._display_defeated_screen()
+            self.boss_defeated = True
+
+
+    def _update_health_bar(self, health=100, max_health=100):
         """Destroys the old health bar and creates a new one based on the boss's current health."""
-        canvas.delete("healthbar")
+        self.canvas.delete("healthbar")
         text_id = self.canvas.create_text(450, 150, text=f"Health: {health}", font=("Arial", 22, "bold"), fill="white",
                                           width=200, tags="healthbar")
         bbox = self.canvas.bbox(text_id)
@@ -202,7 +209,23 @@ class GamePage(ctk.CTkFrame):
         self.canvas.create_rectangle(x1 - padx, y1 - pady, x2 + padx, y2 + pady, width=4, tags="healthbar")
 
         # Fix ordering
-        canvas.tag_raise(text_id, health_rect_id)
+        self.canvas.tag_raise(text_id, health_rect_id)
+
+    def _render_damage_number(self, damage: int):
+        number_id: str = str(uuid.uuid4())
+        x = random.randrange(80, 300)
+        y = random.randrange(80, 250)
+        self.canvas.create_text(x, y, text=f"{damage}", font=("Arial", 30), fill="orange red", tags=number_id)
+        self._number_animation(number_id)
+
+    def _number_animation(self, number_id: str):
+        n_frames = 40
+        for i in range(1, n_frames):
+            size = n_frames - i
+            self.after(i * 50,
+                       lambda ida, s: self.canvas.itemconfig(ida, font=("Arial", s)),
+                       number_id, size)
+        self.after(50*n_frames, lambda: self.canvas.delete(number_id))
 
     def on_show(self):
         """Called when GamePage becomes visible. Bind the space key at root level."""
@@ -230,8 +253,8 @@ class GamePage(ctk.CTkFrame):
 
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
-        self.after(100, lambda: self.canvas.itemconfig(
-            self.character, image=self.character_frames[0]))
+        self.is_animating_boss = True
+        self.after(100, self._attack_after)
 
     def _on_logout_pressed(self):
         """Event callback for when the player clicks the logout button."""
@@ -239,19 +262,31 @@ class GamePage(ctk.CTkFrame):
         self.app.show_frame(LoginPage)
         self.app.dispatcher.emit(Events.LOGOUT_CLICKED)
 
-    def _show_defeated_text(self):
+    def _attack_after(self):
+        self.is_animating_boss = False
+        self.canvas.itemconfig(self.character, image=self.character_frames[2 if self.boss_defeated else 0])
+
+    def _display_defeated_screen(self):
         self.canvas.create_text(304, 204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black",
                                 tags="defeat_text")
         self.canvas.create_text(300, 200, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="white",
                                 tags="defeat_text")
         self.canvas.create_text(300, 260, text="Get ready for the next boss...", font=("Arial", 20, "bold"),
                                 fill="white", tags="defeat_text")
+        self.canvas.delete("healthbar")
+        self.attack_button.configure(state=tk.DISABLED)
+        self.canvas.itemconfig(self.character, image=self.character_frames[2])
+
+    def _hide_defeated_screen(self):
+        self.canvas.delete("defeat_text")
+        self.attack_button.configure(state=tk.NORMAL)
 
     def _on_new_boss(self, game_state: ClientGameState):
         self.boss_defeated = True
+        self._display_defeated_screen()
         self.after(3000, lambda: self._init_new_boss(game_state))
 
     def _init_new_boss(self, game_state: ClientGameState):
-        self.canvas.delete("defeat_text")
+        self._hide_defeated_screen()
         self.boss_defeated = False
         self.update_frame(game_state)
