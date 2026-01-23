@@ -289,6 +289,7 @@ class ClientCommunicator(TCPServerConnection):
         # Abort if the packet tag is unknown
         if not data_class:
             print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+            return
 
         typed_packet = self.get_typed_packet(packet, data_class)
 
