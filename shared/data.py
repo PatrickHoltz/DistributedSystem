@@ -15,6 +15,12 @@ class BossData:
     max_health: int
 
 @dataclass
+class GossipDamage:
+    boss_id: str
+    server_uuid: str
+    total_damage: int
+
+@dataclass
 class GameStateData:
     players: dict[str, PlayerData]
     boss: BossData
