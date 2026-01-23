@@ -99,8 +99,8 @@ class ServerLoop:
             print(f"[SERVER][{self.server_uuid}] No leader found > starting election!")
             self.start_election()
         else:
-            if self.DEBUG:
-                print(f"[SERVER][{self.server_uuid}] Got Answer for leader search: ( {reply.tag} | {reply.content} )")
+            #if self.DEBUG:
+            #    print(f"[SERVER][{self.server_uuid}] Got Answer for leader search: ( {reply.tag} | {reply.content} )")
                 
             if reply.tag == PacketTag.COORDINATOR:
                 leader_uuid = reply.content["leader_uuid"]
@@ -300,6 +300,7 @@ class ServerLoop:
     def start_election(self):
         if self.election_in_progress:
             return
+        
         self.election_in_progress = True
         self.is_leader = False
         self.leader_uuid = None
