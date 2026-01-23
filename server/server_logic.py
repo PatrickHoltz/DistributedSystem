@@ -21,25 +21,33 @@ class GameStateManager:
         return BossData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
 
     def apply_attack(self, username: str):
-        """Applies an attack from the given player to the current boss. Advances the boss stage if the boss is defeated.
-        Returns True if the boss is defeated afterward, False otherwise.
-        """
+        """Reads the damage and returns it. Does not mutate the boss."""
         if username in self._game_state.players:
             damage = self._game_state.players[username].damage
-            self._game_state.boss.health -= damage
             self.latest_damage_numbers.append(damage)
-            boss_defeated = self._game_state.boss.health <= 0
-            if boss_defeated:
-                print("Boss defeated. Advancing to next stage.")
-                self._game_state.boss.health = 0
-                self._advance_boss_stage()
-            return boss_defeated
-        return self._game_state.boss.health <= 0
-    
+            return damage
+        return 0
+
     def _advance_boss_stage(self):
         new_stage = self._game_state.boss.stage + 1
         new_boss = self._create_boss(new_stage)
         self._game_state.boss = new_boss
+
+    def set_boss_health(self, health: int ):
+        """Sets the boss health. Only the leader should call this"""
+        if health < 0:
+            health = 0
+        if health > self._game_state.boss.max_health:
+            health = self._game_state.boss.max_health
+        self._game_state.boss.health = health
+
+    def advance_boss_stage(self):
+        """Only leader should call"""
+        self._advance_boss_stage()
+
+    def set_boss(self, boss: BossData):
+        """Follower takes boss from leader"""
+        self._game_state.boss = boss
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online in all cases."""
@@ -148,13 +156,15 @@ class ConnectionManager:
         }:
             return self.server_loop.handle_leader_message(packet, address)
 
+        if packet.tag in {PacketTag.GOSSIP_DAMAGE, PacketTag.GOSSIP_BOSS_SYNC}:
+            return self.server_loop.handle_gossip_message(packet, address)
+
         if packet.tag == PacketTag.LOGIN:
             try:
                 login_data = LoginData(**packet.content)
                 print(f"Login request received by {login_data.username}")
 
                 server_port = self._add_connection(login_data.username, address)
-
 
                 game_state_update = self.server_loop.game_state_manager.get_player_state(login_data.username)
                 login_reply = LoginReplyData(server_port, game_state_update)
