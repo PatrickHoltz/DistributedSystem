@@ -30,17 +30,17 @@
     - [ ] Reassign orphaned clients
 
 #### Client
-- [ ] Startup
+- [x] Startup
   - [x] Login screen
   - [x] Broadcast into server network
   - [x] Display initial game state
     - [x] Display boss health
-- [ ] Handle user input
+- [x] Handle user input
   - [x] Send damage to server
-  - [ ] Display damage
+  - [x] Display damage
   - [x] Disconnect from server
 - [ ] Handle server input
-  - [ ] Display damage
+  - [x] Display damage
   - [x] Display/Update boss health
   - [x] Display/Hide win screen
   - [ ] Switch server (in case of reassignment)
