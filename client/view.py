@@ -146,8 +146,6 @@ class GamePage(ctk.CTkFrame):
             0, 0, image=self.character_frames[0], anchor="nw", tag="character")
         self._update_health_bar()
 
-        self._render_damage_number(30)
-
         # Foreground elements
         # Top bar with level and player count info
         top_bar = ctk.CTkFrame(self, bg_color="transparent", fg_color="transparent", height=40)
