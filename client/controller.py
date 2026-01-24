@@ -5,7 +5,8 @@ from typing import Optional
 from client.events import UIEventDispatcher, Events
 from model import ClientGameState
 from shared.data import *
-from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPClientConnection
+from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
+from shared.packet import PacketTag, Packet
 
 
 class LoginService:
@@ -25,14 +26,13 @@ class LoginService:
         login_broadcast.start()
         login_broadcast.join()
 
-    def _handle_login_response(self, packet: Packet, address: tuple[str, int]):
+    def _handle_login_response(self, packet: Packet, _address: tuple[str, int]):
         """Called when a login response is received. Updates the game state and starts a TCP connection with the responder."""
 
         if packet.tag == PacketTag.LOGIN_REPLY:
             try:
-                login_reply = LoginReplyData.from_dict(packet.content)
-                username = login_reply.game_state.player.username
-                self._game_controller.on_logged_in(username, address, login_reply)
+                login_reply = LoginReplyData(**packet.content)
+                self._game_controller.on_logged_in(login_reply)
             except TypeError as e:
                 print("Invalid game state received.", e)
     
@@ -51,6 +51,12 @@ class ConnectionService(TCPClientConnection):
 
     def _handle_packet(self, packet: Packet):
         try:
+            if packet.tag == PacketTag.LOGIN_CONFIRM:
+                game_state = PlayerGameStateData.from_dict(packet.content)
+                self._client_game_state.update(game_state)
+                print(f"You are now logged in as {self._username}")
+                self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
+
             # handle the same tags as before
             if packet.tag == PacketTag.CLIENT_PING:
                 pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
@@ -67,7 +73,7 @@ class ConnectionService(TCPClientConnection):
                 return
 
             if packet.tag == PacketTag.NEW_BOSS:
-                typed_packet = TCPClientConnection.get_typed_packet(packet, BossData)
+                typed_packet = SocketUtils.get_typed_packet(packet, BossData)
                 if typed_packet:
                     print("New boss received:", typed_packet.content)
                     self._client_game_state.boss.update(typed_packet.content)
@@ -116,16 +122,20 @@ class GameController:
         self.dispatcher.subscribe(Events.ATTACK_CLICKED, self.on_attack_clicked)
         self.dispatcher.subscribe(Events.LOGOUT_CLICKED, self.on_logout_clicked)
 
-    def on_logged_in(self, username: str, address: tuple[str, int], login_reply: LoginReplyData):
+    def on_logged_in(self, login_reply: LoginReplyData):
         if self._connection_service:
             self._connection_service.stop()
-        print(f"You are now logged in as {username}")
 
-        connect_to_address = (address[0], login_reply.server_port)
-        self._connection_service = ConnectionService(connect_to_address, username, self.client_game_state, self.dispatcher)
+        print(f"The server {login_reply.server_ip}:{login_reply.server_port} has been assigned to you.")
+
+        # start new connection service
+        connect_to_address = (login_reply.server_ip, login_reply.server_port)
+        self._connection_service = ConnectionService(connect_to_address, login_reply.username, self.client_game_state, self.dispatcher)
         self._connection_service.start()
-        self.client_game_state.update(login_reply.game_state)
-        self.dispatcher.emit(Events.LOGGED_IN, self.client_game_state)
+
+        # send login packet to the assigned server
+        login_packet = Packet(LoginData(login_reply.username), tag=PacketTag.LOGIN)
+        self._connection_service.send(login_packet)
 
 
     def on_attack_clicked(self):

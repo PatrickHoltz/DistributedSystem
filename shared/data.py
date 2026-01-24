@@ -43,17 +43,14 @@ class PlayerGameStateData:
 
 @dataclass
 class LoginReplyData:
+    """Data sent back to client after a login broadcast."""
+    server_ip: str
     server_port: int
-    game_state: PlayerGameStateData
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        server_port = data['server_port']
-        game_state = PlayerGameStateData.from_dict(data['game_state']) if data['game_state'] else None
-        return cls(server_port=server_port, game_state=game_state)
+    username: str
 
 @dataclass
 class LoginData:
+    """Data sent by a client for a login request"""
     username: str
 
 @dataclass
@@ -84,3 +81,15 @@ class CoordinatorMessage:
 class LeaderHeartbeat:
     leader_uuid: str
 
+@dataclass
+class ServerInfo:
+    server_uuid: str
+    occupancy: int
+    ip: str
+    listening_port: int
+
+@dataclass
+class ClientInfo:
+    username: str
+    ip: str
+    port: int

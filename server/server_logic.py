@@ -2,9 +2,16 @@ import multiprocessing as mp
 
 import time
 import uuid
+from threading import Thread
+from typing import override, Tuple
 
+from server.server_loop import ServerLoop
 from shared.data import *
-from shared.sockets import Packet, PacketTag, BroadcastListener, BroadcastSocket, TCPServerConnection
+from shared.sockets import BroadcastListener, BroadcastSocket, TCPServerConnection, TCPClientConnection, _TCPConnection, \
+    SocketUtils
+from shared.packet import PacketTag, Packet
+from operator import attrgetter
+import socket
 
 
 class GameStateManager:
@@ -73,19 +80,33 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: 'ServerLoop', uuid: int = -1):
+    def __init__(self, server_loop: ServerLoop, uuid: int = -1):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
-        self.login_listener = BroadcastListener(
-            on_message=self.handle_login,
+        self.broadcast_listener = BroadcastListener(
+            on_message=self.handle_broadcast,
             uuid=uuid)
-        self.login_listener.start()
+        self.broadcast_listener.start()
+
+        self.client_listener = ClientListener(self)
+        self.client_listener.start()
+
+        # wait until client listener started to obtain the listener address
+        self.listener_address = self.client_listener.get_address()
 
         self.server_loop = server_loop
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
-    def _add_connection(self, username: str, address: tuple[str, int]) -> int:
+        self.server_view: dict[str, ServerInfo] = {}
+
+    def _assign_client(self) -> ServerInfo:
+        """Returns the server info of the server which is occupied least"""
+        least_used_server = min(self.server_view.values(), key=attrgetter('occupancy'))
+        return least_used_server
+
+
+    def add_connection(self, username: str, address: tuple[str, int], conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
         Returns the port number the client communicator is listening on.
         """
@@ -135,7 +156,7 @@ class ConnectionManager:
             print(f"Heartbeat timeout: {username}")
             self.remove_connection(username)
 
-    def handle_login(self, packet: Packet, address: tuple[str, int]):
+    def handle_broadcast(self, packet: Packet, address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
         
         #leader messages
@@ -148,17 +169,22 @@ class ConnectionManager:
         }:
             return self.server_loop.handle_leader_message(packet, address)
 
+        if packet.tag == PacketTag.SERVER_HEARTBEAT:
+            if self.server_loop.is_leader:
+                server_info = ServerInfo(**packet.content)
+                self.server_view[server_info.server_uuid] = server_info
+
         if packet.tag == PacketTag.LOGIN:
+            # Non leaders ignore login messages
+            if not self.server_loop.is_leader:
+                return None
+
             try:
                 login_data = LoginData(**packet.content)
                 print(f"Login request received by {login_data.username}")
 
-                server_port = self._add_connection(login_data.username, address)
-
-
-                game_state_update = self.server_loop.game_state_manager.get_player_state(login_data.username)
-                login_reply = LoginReplyData(server_port, game_state_update)
-
+                server_info = self._assign_client()
+                login_reply = LoginReplyData(server_info.ip, server_info.listening_port, login_data.username)
                 response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
 
                 return response
@@ -183,6 +209,7 @@ class ClientCommunicator(TCPServerConnection):
 
         self._username = username
 
+    @override
     def _handle_packet(self, packet: Packet):
         """Checks packet validity and provides the server loop with it."""
 
@@ -193,7 +220,7 @@ class ClientCommunicator(TCPServerConnection):
             print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
             return
 
-        typed_packet = self.get_typed_packet(packet, data_class)
+        typed_packet = SocketUtils.get_typed_packet(packet, data_class)
 
         # Abort if the packet content could not be transformed into the appropriate data class
         if not typed_packet:
@@ -204,3 +231,52 @@ class ClientCommunicator(TCPServerConnection):
         # Put the received, typed packet onto the shared in_queue so the
         # main ServerLoop process can consume it.
         self._recv_queue.put((self._username, typed_packet))
+
+class ClientListener(_TCPConnection, Thread):
+    """A socket which accepts incoming connections if they deliver a login packet with them."""
+
+    def __init__(self, connection_manager: ConnectionManager):
+        super().__init__()
+        self._connection_manager = connection_manager
+
+        # Queue to communicate the actual port back to the parent process
+        self.addr_queue = mp.Queue()
+
+    def run(self):
+        listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listen_sock.bind(("", 0))
+
+        # set a high backlog so that no login request gets lost
+        listen_sock.listen(50)
+
+        self.addr_queue.put(self.socket.getsockname())
+
+        while True:
+            client_sock, client_addr = listen_sock.accept()
+
+            packet = SocketUtils.recv_packet(client_sock)
+
+            if packet.tag == PacketTag.LOGIN:
+                login_data = LoginData(**packet.content)
+                self._connection_manager.add_connection(login_data.username, client_addr, client_sock)
+
+
+    def get_address(self) -> int:
+        """Returns the port the server is listening on. Blocks until the port is available."""
+        return self.addr_queue.get()
+
+
+class LeaderCommunicator(TCPClientConnection):
+
+    def __init__(self, leader_address: Tuple[str, int], connection_manager: ConnectionManager):
+        super().__init__(leader_address)
+        self._connection_manager = connection_manager
+
+    @override
+    def _handle_packet(self, packet: Packet):
+
+        if packet.tag == PacketTag.ADD_CLIENT:
+
+
+            self._connection_manager.add_connection()
+            pass

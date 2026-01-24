@@ -1,11 +1,13 @@
 import multiprocessing as mp
 import time
+from typing import Optional
 
 from uuid import UUID, uuid4
 from threading import Thread
 
 from server_logic import ConnectionManager, GameStateManager
-from shared.sockets import Packet, PacketTag, BroadcastSocket
+from shared.sockets import BroadcastSocket, Heartbeat
+from shared.packet import PacketTag, Packet
 from shared.data import *
 
 class ServerLoop:
@@ -39,6 +41,8 @@ class ServerLoop:
         self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
         self._last_leader_seen = time.monotonic()
 
+        self._heartbeat: Optional[Heartbeat] = None
+
         print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
         self.run()
 
@@ -63,11 +67,21 @@ class ServerLoop:
                     self.leader_uuid = None
                     self.start_election()
 
-            # leader sends heartbeat
-            if self.is_leader and now >= self._next_hb:
+            # heartbeats
+            if now >= self._next_hb:
                 self._next_hb += self.BULLY_HEARTBEAT_INTERVAL
-                hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
-                self._fire_broadcast(hb, tries=1, timeout_s=0.15)
+
+                # leader broadcasts its existence
+                if self.is_leader:
+                    hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
+                    self._fire_broadcast(hb, tries=1, timeout_s=0.15)
+
+                # non-leaders send their occupancy
+                else:
+                    occupancy = len(self.connection_manager.active_connections)
+                    hb = Packet(ServerInfo(server_uuid=self.server_uuid, occupancy=occupancy), tag=PacketTag.SERVER_HEARTBEAT)
+                    self._fire_broadcast(hb, tries=1, timeout_s=0.15)
+
 
             time.sleep(self.tick_rate)
 
@@ -337,3 +351,23 @@ class ServerLoop:
         if self.leader_uuid is None or self.is_leader:
             self.election_in_progress = False
             self.start_election()
+
+    def _get_heartbeat_packet(self):
+        if not self._heartbeat is None:
+            self._heartbeat.stop()
+
+        if self.is_leader:
+            return Packet(LeaderHeartbeat(self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
+
+        else:
+            occupancy = len(self.connection_manager.active_connections)
+            return Packet(ServerInfo(self.server_uuid, occupancy), tag=PacketTag.SERVER_HEARTBEAT)
+
+
+    def _on_leader_changed(self):
+        if self.is_leader:
+            pass
+        else:
+            # TODO Create a new LeaderCommunicator
+            pass
+
