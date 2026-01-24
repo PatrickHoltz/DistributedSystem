@@ -42,7 +42,7 @@ class GameStateManager:
                 self._advance_boss_stage()
             return boss_defeated
         return self._game_state.boss.health <= 0
-    
+
     def _advance_boss_stage(self):
         new_stage = self._game_state.boss.stage + 1
         new_boss = self._create_boss(new_stage)
@@ -51,10 +51,11 @@ class GameStateManager:
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online in all cases."""
         if username not in self._game_state.players:
-            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1, online=True)
+            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1,
+                                                            online=True)
         else:
             self._game_state.players[username].online = True
-    
+
     def logout_player(self, username: str):
         if username in self._game_state.players:
             self._game_state.players[username].online = False
@@ -69,7 +70,7 @@ class GameStateManager:
 
     def get_boss(self) -> BossData:
         return self._game_state.boss
-    
+
     def get_online_player_count(self) -> int:
         online_players = [p for p in self._game_state.players.values() if p.online]
         return len(online_players)
@@ -105,7 +106,6 @@ class ConnectionManager:
         least_used_server = min(self.server_view.values(), key=attrgetter('occupancy'))
         return least_used_server
 
-
     def add_connection(self, username: str, address: tuple[str, int], conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
         Returns the port number the client communicator is listening on.
@@ -129,7 +129,7 @@ class ConnectionManager:
         """Closes an active connection."""
 
         if username in self.active_connections:
-            self.active_connections[username].terminate()
+            self.active_connections[username].stop()
             del self.active_connections[username]
         self.last_seen.pop(username, None)
         self.server_loop.game_state_manager.logout_player(username)
@@ -158,7 +158,7 @@ class ConnectionManager:
 
     def handle_broadcast(self, packet: Packet, address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
-        
+
         #leader messages
         if packet.tag in {
             PacketTag.SERVER_HELLO,
@@ -168,11 +168,6 @@ class ConnectionManager:
             PacketTag.BULLY_LEADER_HEARTBEAT,
         }:
             return self.server_loop.handle_leader_message(packet, address)
-
-        if packet.tag == PacketTag.SERVER_HEARTBEAT:
-            if self.server_loop.is_leader:
-                server_info = ServerInfo(**packet.content)
-                self.server_view[server_info.server_uuid] = server_info
 
         if packet.tag == PacketTag.LOGIN:
             # Non leaders ignore login messages
@@ -191,6 +186,7 @@ class ConnectionManager:
             except TypeError as e:
                 print("Invalid login data received.", e)
         return None
+
 
 class ClientCommunicator(TCPServerConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
@@ -232,6 +228,7 @@ class ClientCommunicator(TCPServerConnection):
         # main ServerLoop process can consume it.
         self._recv_queue.put((self._username, typed_packet))
 
+
 class ClientListener(_TCPConnection, Thread):
     """A socket which accepts incoming connections if they deliver a login packet with them."""
 
@@ -260,23 +257,12 @@ class ClientListener(_TCPConnection, Thread):
                 login_data = LoginData(**packet.content)
                 self._connection_manager.add_connection(login_data.username, client_addr, client_sock)
 
+            # Also read server heartbeats
+            if packet.tag == PacketTag.SERVER_HEARTBEAT and self._connection_manager.server_loop.is_leader:
+                server_info = ServerInfo(**packet.content)
+                self._connection_manager.server_view[server_info.server_uuid] = server_info
+
 
     def get_address(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
         return self.addr_queue.get()
-
-
-class LeaderCommunicator(TCPClientConnection):
-
-    def __init__(self, leader_address: Tuple[str, int], connection_manager: ConnectionManager):
-        super().__init__(leader_address)
-        self._connection_manager = connection_manager
-
-    @override
-    def _handle_packet(self, packet: Packet):
-
-        if packet.tag == PacketTag.ADD_CLIENT:
-
-
-            self._connection_manager.add_connection()
-            pass

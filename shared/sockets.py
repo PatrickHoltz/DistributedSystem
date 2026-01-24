@@ -43,6 +43,8 @@ class SocketUtils:
         packet = Packet.decode(length_bytes + json_bytes)
         return packet
 
+
+    # TODO use this method everywhere where packets are being received. Also make Packet generic
     @classmethod
     def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
         """

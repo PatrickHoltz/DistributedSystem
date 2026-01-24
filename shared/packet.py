@@ -20,7 +20,7 @@ class PacketTag(StrEnum):
     LOGIN = "login"
     # login reply by the leader
     LOGIN_REPLY = "login_reply"
-    # login confirm
+    # login confirmation by the target server
     LOGIN_CONFIRM = "login_confirm"
 
     #Bully

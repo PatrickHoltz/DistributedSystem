@@ -1,6 +1,6 @@
 import multiprocessing as mp
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 from uuid import UUID, uuid4
 from threading import Thread
@@ -35,6 +35,7 @@ class ServerLoop:
         self.tick_rate = 0.1  # ticks per second
 
         self.leader_uuid: str | None = None
+        self.leader_addr: Tuple[str, int] | None = None
         self.is_leader: bool = False
         self.election_in_progress: bool = False
 
@@ -66,21 +67,6 @@ class ServerLoop:
                 if now - self._last_leader_seen > self.BULLY_HEARTBEAT_TIMEOUT:
                     self.leader_uuid = None
                     self.start_election()
-
-            # heartbeats
-            if now >= self._next_hb:
-                self._next_hb += self.BULLY_HEARTBEAT_INTERVAL
-
-                # leader broadcasts its existence
-                if self.is_leader:
-                    hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
-                    self._fire_broadcast(hb, tries=1, timeout_s=0.15)
-
-                # non-leaders send their occupancy
-                else:
-                    occupancy = len(self.connection_manager.active_connections)
-                    hb = Packet(ServerInfo(server_uuid=self.server_uuid, occupancy=occupancy), tag=PacketTag.SERVER_HEARTBEAT)
-                    self._fire_broadcast(hb, tries=1, timeout_s=0.15)
 
 
             time.sleep(self.tick_rate)
@@ -122,7 +108,7 @@ class ServerLoop:
                 
             if reply.tag == PacketTag.BULLY_COORDINATOR:
                 leader_uuid = reply.content["leader_uuid"]
-                self._accept_leader(leader_uuid)
+                self._accept_leader(leader_uuid, ) #TODO what to put here
 
                 if UUID(self.server_uuid).int > UUID(leader_uuid).int: # higher uuid then leader
                     print(f"[SERVER][{self.server_uuid}][BULLY] I have higher UUID > starting election!")
@@ -244,7 +230,7 @@ class ServerLoop:
                 if self.DEBUG:
                     print(f"[SERVER][{self.server_uuid}][BULLY] Received new leader <{leader_uuid}>")
 
-                self._accept_leader(leader_uuid)
+                self._accept_leader(leader_uuid, address)
 
                 # if im higher than announced leader I will take over
                 if gt(self.server_uuid, leader_uuid):
@@ -271,7 +257,7 @@ class ServerLoop:
                     if self.DEBUG:
                         print(f"[SERVER][{self.server_uuid}][BULLY] UUID different > changing stored leader")
 
-                    self._accept_leader(leader_uuid)
+                    self._accept_leader(leader_uuid, address)
 
                 if gt(self.server_uuid, leader_uuid):
                     if self.DEBUG:
@@ -294,11 +280,17 @@ class ServerLoop:
         bs.start()
         return bs.future.result(timeout=timeout_s + 0.5)
 
-    def _accept_leader(self, leader_uuid: str):
+    def _accept_leader(self, leader_uuid: str, addr: Tuple[str, int]):
+        old_leader_uuid = self.leader_uuid
+
         self.leader_uuid = leader_uuid
+        self.leader_addr = addr
         self.is_leader = (leader_uuid == self.server_uuid)
         self.election_in_progress = False
         self._last_leader_seen = time.monotonic()
+
+        if old_leader_uuid != leader_uuid:
+            self._on_leader_changed()
         print(f"[SERVER][{self.server_uuid}][BULLY] Accepting leader <{self.leader_uuid}> {"(myself)" if self.is_leader else ""}")
 
     def _become_leader(self):
@@ -352,7 +344,7 @@ class ServerLoop:
             self.election_in_progress = False
             self.start_election()
 
-    def _get_heartbeat_packet(self):
+    def get_heartbeat_packet(self):
         if not self._heartbeat is None:
             self._heartbeat.stop()
 
@@ -365,9 +357,14 @@ class ServerLoop:
 
 
     def _on_leader_changed(self):
+        """Callback when the leader changes. Initializes a new heartbeat based on being a leader or not."""
+        if self._heartbeat:
+            self._heartbeat.stop()
+
         if self.is_leader:
-            pass
+            # broadcast heartbeat
+            self._heartbeat = Heartbeat(self.get_heartbeat_packet, 0.15)
         else:
-            # TODO Create a new LeaderCommunicator
-            pass
+            # tcp heartbeat to leader
+            self._heartbeat = Heartbeat(self.get_heartbeat_packet, 0.15, self.leader_addr[0], self.leader_addr[1])
 
