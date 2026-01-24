@@ -16,24 +16,6 @@ class BossData:
     health: int
     max_health: int
 
-    boss_id: str
-    server_uuid: str
-    total_damage: int
-
-@dataclass
-class GossipBossSync:
-    boss_id: str
-    leader_uuid: str
-    boss: BossData
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        return cls(
-            boss_id=data["boss_id"],
-            leader_uuid=data["leader_uuid"],
-            boss=BossData(**data["boss"]),
-        )
-
 @dataclass
 class GameStateData:
     players: dict[str, PlayerData]
