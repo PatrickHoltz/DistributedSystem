@@ -6,6 +6,8 @@ class PlayerData:
     damage: int
     level: int
     online: bool
+    last_seen_ts: float = 0.0
+    #damageDone: int
 
 @dataclass
 class BossData:
@@ -14,8 +16,6 @@ class BossData:
     health: int
     max_health: int
 
-@dataclass
-class GossipDamage:
     boss_id: str
     server_uuid: str
     total_damage: int
@@ -104,3 +104,27 @@ class CoordinatorMessage:
 class LeaderHeartbeat:
     leader_uuid: str
 
+@dataclass
+class GossipBossSync:
+    boss_id: str
+    leader_uuid: str
+    boss: BossData
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(
+            boss_id=data["boss_id"],
+            leader_uuid=data["leader_uuid"],
+            boss=BossData(**data["boss"]),
+        )
+
+@dataclass
+class PlayerStats:
+    player_count: int
+    players: dict[str, PlayerData]
+
+@dataclass
+class GossipPlayerStats:
+    server_uuid: str
+    seq: int
+    stats: PlayerStats

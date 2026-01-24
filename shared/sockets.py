@@ -32,8 +32,8 @@ class PacketTag(StrEnum):
     BULLY_COORDINATOR = "coordinator"
     BULLY_LEADER_HEARTBEAT = "leader_heartbeat"
 
-    # Gossip 
-    GOSSIP_DAMAGE = "gossip_damage"
+    #Gossip
+    GOSSIP_PLAYER_STATS = "gossip_player_stats"
     GOSSIP_BOSS_SYNC = "gossip_boss_sync"
 
 class Packet:

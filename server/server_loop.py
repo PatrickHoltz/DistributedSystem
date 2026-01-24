@@ -1,8 +1,9 @@
 import multiprocessing as mp
 import time
+import random
 
 from uuid import UUID, uuid4
-from threading import Thread
+from threading import Thread, Lock
 
 from server_logic import ConnectionManager, GameStateManager
 from shared.sockets import Packet, PacketTag, BroadcastSocket
@@ -18,6 +19,9 @@ class ServerLoop:
     BULLY_COORDINATOR_WAIT = 3.0
 
     DEBUG = True
+
+    GOSSIP_PLAYER_STATS_INTERVAL = 0.50
+    GOSSIP_BOSS_SYNC_INTERVAL = 0.35
 
     def __init__(self):
         super().__init__()
@@ -39,6 +43,15 @@ class ServerLoop:
         self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
         self._last_leader_seen = time.monotonic()
 
+        self._gossip_lock = Lock()
+        self.boss_id: str = str(uuid4())
+
+        self._stats_seq: int = 0
+        self._last_stats_seq_by_server: dict[str, int] = {}
+        self._next_gossip_stats = time.monotonic() + random.uniform(0.0, self.GOSSIP_PLAYER_STATS_INTERVAL)
+
+        self._next_boss_sync = time.monotonic() + random.uniform(0.0, self.GOSSIP_BOSS_SYNC_INTERVAL)
+
         print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
         self.run()
 
@@ -52,6 +65,19 @@ class ServerLoop:
             self.game_state_manager.latest_damage_numbers = []
 
             self._process_incoming_messages()
+
+            # Leader computes boss HP/stage based on merged damage counters
+            self._leader_apply_boss_progress()
+
+            # Everyone gossips PlayerStats
+            if now >= self._next_gossip_stats:
+                self._next_gossip_stats += self.GOSSIP_PLAYER_STATS_INTERVAL
+                self._broadcast_player_stats()
+
+            if self.is_leader and now >= self._next_boss_sync:
+                self._next_boss_sync += self.GOSSIP_BOSS_SYNC_INTERVAL
+                self._broadcast_boss_sync()
+
             self._update_game_states()
             self._send_outgoing_messages()
 
@@ -70,6 +96,84 @@ class ServerLoop:
                 self._fire_broadcast(hb, tries=1, timeout_s=0.15)
 
             time.sleep(self.tick_rate)
+
+    def handle_gossip_message(self, packet: Packet, address: tuple[str, int]):
+        match packet.tag:
+            case PacketTag.GOSSIP_PLAYER_STATS:
+                sender_uuid = packet.content.get("server_uuid")
+                seq = int(packet.content.get("seq", -1))
+                stats = packet.content.get("stats") or {}
+                players = stats.get("players") or {}
+
+                if not sender_uuid:
+                    return None
+
+                last = self._last_stats_seq_by_server.get(sender_uuid, -1)
+                if seq <= last:
+                    return None
+                self._last_stats_seq_by_server[sender_uuid] = seq
+
+                self.game_state_manager.merge_player_stats(players)
+                return None
+
+            case PacketTag.GOSSIP_BOSS_SYNC:
+                sync_leader = packet.content.get("leader_uuid")
+                if self.leader_uuid is not None and sync_leader != self.leader_uuid:
+                    return None
+
+                new_boss_id = packet.content.get("boss_id")
+                boss_dict = packet.content.get("boss")
+
+                if not new_boss_id or not isinstance(boss_dict, dict):
+                    return None
+
+                new_boss = BossData(**boss_dict)
+
+                with self._gossip_lock:
+                    boss_changed = (new_boss_id != self.boss_id)
+                    self.boss_id = new_boss_id
+                    self.game_state_manager.set_boss(new_boss)
+
+                    if boss_changed:
+                        # no damage totals to reset
+                        pass
+                return None
+
+            case _:
+                return None
+
+    def _broadcast_player_stats(self):
+        """Broadcast gossip-safe PlayerStats."""
+        self._stats_seq += 1
+        stats = self.game_state_manager.get_player_stats()
+        msg = GossipPlayerStats(server_uuid=self.server_uuid, seq=self._stats_seq, stats=stats)
+        pkt = Packet(msg, tag=PacketTag.GOSSIP_PLAYER_STATS, uuid=UUID(self.server_uuid).int)
+        self._fire_broadcast(pkt, tries=1, timeout_s=0.08)
+
+    def _broadcast_boss_sync(self):
+        if not self.is_leader:
+            return
+        boss = self.game_state_manager.get_boss()
+        msg = GossipBossSync(boss_id=self.boss_id, leader_uuid=self.server_uuid, boss=boss)
+        pkt = Packet(msg, tag=PacketTag.GOSSIP_BOSS_SYNC, uuid=UUID(self.server_uuid).int)
+        self._fire_broadcast(pkt, tries=2, timeout_s=0.10)
+
+    def _leader_apply_boss_progress(self):
+        """Leader-only: if boss is dead, advance stage and announce a new boss_id"""
+        if not self.is_leader:
+            return
+
+        with self._gossip_lock:
+            boss = self.game_state_manager.get_boss()
+            if boss.health > 0:
+                return
+
+            self.game_state_manager.advance_boss_stage()
+            self.boss_id = str(uuid4())
+
+            new_boss = self.game_state_manager.get_boss()
+            self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
+            self._broadcast_boss_sync()
 
     def stop(self):
         self._is_stopped = True
@@ -145,10 +249,11 @@ class ServerLoop:
                     self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
-                    boss_defeated = self.game_state_manager.apply_attack(username)
-                    if boss_defeated:
-                        new_boss = self.game_state_manager.get_boss()
-                        self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
+                    damage = self.game_state_manager.apply_attack(username)
+                    if self.is_leader and damage > 0:
+                        with self._gossip_lock:
+                            boss = self.game_state_manager.get_boss()
+                            self.game_state_manager.set_boss_health(boss.health - int(damage))
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
@@ -300,6 +405,9 @@ class ServerLoop:
         )
         self._fire_broadcast(coord_packet, tries=3, timeout_s=0.25)
         print(f"[SERVER][{self.server_uuid}][BULLY] No one answered > declaring myself leader")
+
+        #push boss snapshot right away so followers learn boss_id quickly
+        self._broadcast_boss_sync()
 
     def start_election(self):
         if self.election_in_progress:

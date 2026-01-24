@@ -10,10 +10,66 @@ from shared.sockets import Packet, PacketTag, BroadcastListener, BroadcastSocket
 class GameStateManager:
     """Manager of the overall game state."""
     base_damage = 10
+    ONLINE_TTL_SECONDS = 10.0
 
     def __init__(self):
         self._game_state = GameStateData(players={}, boss=self._create_boss(1))
         self.latest_damage_numbers: list[int] = []
+
+    def touch_player(self, username: str):
+        """Update last_seen_ts for TTL-online"""
+        now = time.time()
+        player = self._game_state.players.get(username)
+        if player is None:
+            return
+        player.last_seen_ts = now
+        player.online = True
+
+    def _refresh_online_flags(self):
+        """Derive online from last_seen_ts using TTL."""
+        now = time.time()
+        for player in self._game_state.players.values():
+            last = float(getattr(player, "last_seen_ts", 0.0))
+            player.online = (now - last) < self.ONLINE_TTL_SECONDS
+
+    def get_player_stats(self) -> PlayerStats:
+        """Gossip-safe stats: username/level/last_seen_ts per player."""
+        self._refresh_online_flags()
+        players_meta: dict[str, dict] = {}
+        for username, p in self._game_state.players.items():
+            players_meta[username] = {
+                "username": p.username,
+                "level": int(p.level),
+                "last_seen_ts": float(getattr(p, "last_seen_ts", 0.0)),
+            }
+        return PlayerStats(
+            player_count=self.get_online_player_count(),
+            players=players_meta
+        )
+
+    def merge_player_stats(self, incoming_players: dict[str, dict]):
+        """Merge gossip-safe player metaData into local state."""
+        for username, metaData in incoming_players.items():
+            incoming_username = metaData.get("username", username)
+            incoming_level = int(metaData.get("level", 1))
+            incoming_seen = float(metaData.get("last_seen_ts", 0.0))
+
+            cur = self._game_state.players.get(username)
+            if cur is None:
+                self._game_state.players[username] = PlayerData(
+                    username=incoming_username,
+                    damage=self.base_damage,
+                    online=True,
+                    level=incoming_level,
+                    last_seen_ts=incoming_seen,
+                )
+                continue
+
+            cur.level = max(int(cur.level), incoming_level)
+            cur.last_seen_ts = max(float(getattr(cur, "last_seen_ts", 0.0)), incoming_seen)
+
+        self._refresh_online_flags()
+
 
     @classmethod
     def _create_boss(cls, stage: int) -> BossData:
@@ -50,17 +106,28 @@ class GameStateManager:
         self._game_state.boss = boss
 
     def login_player(self, username: str):
-        """Creates a new player entry if it does not exist and marks the player as online in all cases."""
+        """Creates a new player entry if it does not exist and marks the player as online."""
+        now = time.time()
         if username not in self._game_state.players:
-            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1, online=True)
+            self._game_state.players[username] = PlayerData(
+                username=username,
+                damage=self.base_damage,
+                online=True,
+                level=1,
+                last_seen_ts=now,
+            )
         else:
-            self._game_state.players[username].online = True
+            player = self._game_state.players[username]
+            player.online = True
+            player.last_seen_ts = now
     
     def logout_player(self, username: str):
         if username in self._game_state.players:
             self._game_state.players[username].online = False
+            self._game_state.players[username].last_seen_ts = 0.0
 
     def get_player_state(self, username: str) -> PlayerGameStateData:
+        self._refresh_online_flags()
         return PlayerGameStateData(
             boss=self._game_state.boss,
             player_count=self.get_online_player_count(),
@@ -72,6 +139,7 @@ class GameStateManager:
         return self._game_state.boss
     
     def get_online_player_count(self) -> int:
+        self._refresh_online_flags()
         online_players = [p for p in self._game_state.players.values() if p.online]
         return len(online_players)
 
@@ -97,7 +165,6 @@ class ConnectionManager:
         """Adds a new active connection and registers it in the game state manager.
         Returns the port number the client communicator is listening on.
         """
-
         self.server_loop.game_state_manager.login_player(username)
 
         communicator = ClientCommunicator(("", 0), username, self.server_loop.in_queue)
@@ -123,6 +190,7 @@ class ConnectionManager:
 
     def mark_seen(self, username: str):
         self.last_seen[username] = time.monotonic()
+        self.server_loop.game_state_manager.touch_player(username)
 
     def tick_client_heartbeat(self, now: float):
         """
@@ -156,7 +224,7 @@ class ConnectionManager:
         }:
             return self.server_loop.handle_leader_message(packet, address)
 
-        if packet.tag in {PacketTag.GOSSIP_DAMAGE, PacketTag.GOSSIP_BOSS_SYNC}:
+        if packet.tag in {PacketTag.GOSSIP_PLAYER_STATS, PacketTag.GOSSIP_BOSS_SYNC}:
             return self.server_loop.handle_gossip_message(packet, address)
 
         if packet.tag == PacketTag.LOGIN:
