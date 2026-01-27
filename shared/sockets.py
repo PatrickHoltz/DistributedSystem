@@ -67,8 +67,11 @@ class Packet:
     def decode(cls, data: bytes) -> 'Packet':
         """Decodes a byte array into a packet ready to use. The content is kept as a dictionary.
         """
+        if len(data) < 4:
+            raise ValueError('Packet too short to decode length header.')
         data_length = int.from_bytes(data[0:4])
-        dictionary = json.loads(data[4:].decode())
+        json_payload = data[4:4 + data_length]
+        dictionary = json.loads(json_payload.decode())
         return cls(dictionary['content'], PacketTag(dictionary["tag"]), int(dictionary["uuid"]), data_length, )
 
 
@@ -178,7 +181,6 @@ class BroadcastListener(Thread):
         self._stop_event.set()
 
     def run(self):
-        local_ip = self.get_local_ip()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -212,7 +214,6 @@ class BroadcastListener(Thread):
                 if response_packet:
                     sock.sendto(response_packet.encode(), addr)
 
-
         finally:
             sock.close()
 
@@ -239,8 +240,6 @@ class _TCPConnection:
         self._recv_queue: mp.Queue = recv_queue
 
         self._stop_event = mp.Event()
-
-
 
         self.socket: Optional[socket.socket] = None
 
