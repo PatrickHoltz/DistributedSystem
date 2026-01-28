@@ -9,6 +9,8 @@ from threading import Thread, Lock, Timer
 from server_logic import ConnectionManager, GameStateManager
 from shared.sockets import Packet, PacketTag, BroadcastSocket, BroadcastListener
 from shared.data import *
+from shared.utils import Debug
+
 
 class ServerLoop:
     """Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick."""
@@ -55,7 +57,7 @@ class ServerLoop:
         self.bully_listener = BroadcastListener(on_message=self.handle_leader_message, server_uuid=UUID(self.server_uuid).int)
         self.bully_listener.start()
 
-        print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
+        Debug.log(f"Started new server with UUID<{self.server_uuid}>", "Server")
         self.run()
 
     def run(self):
@@ -77,6 +79,7 @@ class ServerLoop:
             # follower: leader timeout => election
             # follower: leader timeout (or unknown leader) => election
             if not self.is_leader and (now - self._last_leader_seen) > timeout_threshold:
+                Debug.log(f"No leader heartbeat received. Starting election.", "SERVER", "BULLY")
                 self.leader_uuid = None
                 self._last_leader_seen = now
                 self._start_election_checker()
@@ -166,8 +169,7 @@ class ServerLoop:
             case PacketTag.BULLY_ELECTION:
                 candidate = packet.content["candidate_uuid"]
 
-                if self.DEBUG:
-                    print(f"[SERVER][{self.server_uuid}][BULLY] Received election candidate <{candidate}>")
+                Debug.log(f"Received election candidate <{candidate}>", "SERVER", "BULLY")
 
 
                 if gt(self.server_uuid, candidate):
@@ -181,8 +183,7 @@ class ServerLoop:
                         BroadcastSocket(coord, timeout_s=0.15, send_attempts=5).start()
 
                     else:
-                        if self.DEBUG:
-                            print(f"[SERVER][{self.server_uuid}][BULLY] My UUID is larger than candidate > replying ok")
+                        Debug.log("My UUID is larger than candidate > replying ok", "SERVER", "BULLY")
                         # to start leader selection simultaneously with sending ok back
                         ok_packet = Packet(
                             OkMessage(responder_uuid=self.server_uuid),
@@ -196,8 +197,8 @@ class ServerLoop:
 
                 # I am the current leader and the incoming packet has a higher uuid => stepping down as leader
                 if self.is_leader and gt(candidate, self.server_uuid):
-                    if self.DEBUG:
-                        print(f"[SERVER][{self.server_uuid}][BULLY] Stronger candidate <{candidate}> contacted me. Stepping down.")
+                    Debug.log(f"Stronger candidate <{candidate}> contacted me. Stepping down.", "SERVER", "BULLY")
+
                     with self._election_lock:
                         self.is_leader = False
                         self.leader_uuid = None
@@ -228,9 +229,7 @@ class ServerLoop:
                 # if im higher than announced leader I will take over
                 if gt(self.server_uuid, leader_uuid):
                     if (not self.is_leader) and (not self.election_in_progress) and (now >= self._last_election_trigger + self.TAKEOVER_COOLDOWN):
-
-                        if self.DEBUG:
-                            print(f"[SERVER][{self.server_uuid}][BULLY] Coordinator is weaker <{leader_uuid}> -> triggering takeover election")
+                        Debug.log("Coordinator is weaker <{leader_uuid}> -> triggering takeover election", "SERVER", "BULLY")
                         self._start_election_checker()
 
                 return None
@@ -249,8 +248,8 @@ class ServerLoop:
                 if gt(self.server_uuid, leader_uuid):
                     with self._election_lock:
                         if self.election_in_progress:
-                            if self.DEBUG:
-                                print(f"[SERVER][{self.server_uuid}][BULLY] Ignoring weaker heartbeat <{leader_uuid}> during my election")
+                            Debug.log("Ignoring weaker heartbeat <{leader_uuid}> during my election", "SERVER",
+                                      "BULLY")
                             return None
 
                 # accept heartbeat
@@ -296,10 +295,8 @@ class ServerLoop:
             self._next_hb = time.monotonic()
 
         if changed:
-            print(
-                f"[SERVER][{self.server_uuid}][BULLY] Accepting leader <{self.leader_uuid}> "
-                f"{'(myself)' if self.is_leader else ''}"
-            )
+            Debug.log(f"Accepting leader <{self.leader_uuid}> {'(myself)' if self.is_leader else ''}", "SERVER",
+                      "BULLY")
 
     def _become_leader(self):
         """Callback when no OK-Message has been received after an election broadcast."""
@@ -317,7 +314,7 @@ class ServerLoop:
             server_uuid=UUID(self.server_uuid).int
         )
 
-        print(f"[SERVER][{self.server_uuid}][BULLY] No one answered > declaring myself leader")
+        Debug.log(f"No one answered > declaring myself leader", "SERVER", "BULLY")
         BroadcastSocket(coord_packet, broadcast_port=10002, timeout_s=0.25, send_attempts=3).start()
 
     def _start_election(self):
@@ -335,6 +332,8 @@ class ServerLoop:
             tag=PacketTag.BULLY_ELECTION,
             server_uuid=UUID(self.server_uuid).int
         )
+
+        Debug.log(f"Starting leader election", "SERVER", "BULLY")
 
         BroadcastSocket(election_packet, broadcast_port=10002, timeout_s=0.15, send_attempts=3).start()
 
