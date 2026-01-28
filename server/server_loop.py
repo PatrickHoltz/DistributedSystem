@@ -15,8 +15,8 @@ class ServerLoop:
     MAX_MESSAGES_PER_TICK = 50
 
     BULLY_HEARTBEAT_INTERVAL = 2.0
-    BULLY_HEARTBEAT_TIMEOUT = 8.0
-    BULLY_ELECTION_OK_WAIT = 2
+    BULLY_HEARTBEAT_TIMEOUT = 4.0
+    BULLY_ELECTION_OK_WAIT = 4.0
     BULLY_COORDINATOR_WAIT = 8.0
     TAKEOVER_COOLDOWN = 1.0
     _next_takeover_allowed = 0.0
@@ -50,7 +50,10 @@ class ServerLoop:
 
         self.election_timer: Timer | None = None
 
-        self.timeout_jitter = random.uniform(0.0, 3.0)
+        #self.timeout_jitter = random.uniform(0.0, 3.0)
+
+        self.bully_listener = BroadcastListener(on_message=self.handle_leader_message, server_uuid=UUID(self.server_uuid).int)
+        self.bully_listener.start()
 
         print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
         self.run()
@@ -81,8 +84,8 @@ class ServerLoop:
             # leader sends heartbeat
             if self.is_leader and now >= self._next_hb:
                 self._next_hb += self.BULLY_HEARTBEAT_INTERVAL
-                hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT, uuid=UUID(self.server_uuid).int)
-                self._fire_broadcast(hb, tries=1, timeout_s=0.15)
+                hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
+                BroadcastSocket(hb, broadcast_port=10002, timeout_s=0.15, send_attempts=3).start()
 
             time.sleep(self.tick_rate)
 
@@ -201,8 +204,6 @@ class ServerLoop:
                         self.election_in_progress = False
                 return None
 
-                return None
-
             # a leader is announced
             case PacketTag.BULLY_COORDINATOR:
                 leader_uuid = packet.content["leader_uuid"]
@@ -210,13 +211,14 @@ class ServerLoop:
                 now = time.monotonic()
                 self._last_leader_seen = now
 
-                if gt(self.leader_uuid, leader_uuid):
-                    with self._election_lock:
-                        if self.election_in_progress:
-                            if self.DEBUG:
-                                print(f"[SERVER][{self.server_uuid}][BULLY] Ignoring weaker coordinator <{leader_uuid}> during my election")
-                            return None
+                #if gt(self.leader_uuid, leader_uuid):
+                #    with self._election_lock:
+                #        if self.election_in_progress:
+                #            if self.DEBUG:
+                #                print(f"[SERVER][{self.server_uuid}][BULLY] Ignoring weaker coordinator <{leader_uuid}> during my election")
+                #            return None
 
+                # not self leader
                 if leader_uuid != self.server_uuid and gt(leader_uuid, self.server_uuid):
                     if self.coordinator_timer:
                         self.coordinator_timer.cancel()
