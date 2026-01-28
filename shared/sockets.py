@@ -1,6 +1,7 @@
 """This module contains classes for sending packets in different forms."""
 
 import socket
+from collections import deque
 from threading import Thread, Event
 import multiprocessing as mp
 from concurrent.futures import Future
@@ -10,6 +11,7 @@ import struct
 import queue
 from typing import Optional, Tuple, Callable, TypeVar, Type
 from enum import StrEnum
+from uuid import uuid4, UUID
 
 
 class PacketTag(StrEnum):
@@ -36,11 +38,12 @@ class Packet:
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, uuid: int = -1, length: int = 0):
+    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = str(uuid4()), server_uuid: int = -1, length: int = 0):
         """Content must be a dataclass"""
         self.content = content
         self.tag = tag
-        self.uuid = uuid
+        self.packet_uuid = packet_uuid
+        self.server_uuid = server_uuid
         
         self._length = length
 
@@ -49,7 +52,8 @@ class Packet:
             raise TypeError("Could not encode packet. Packet content must be a dataclass.")
         dictionary = dict()
         dictionary['tag'] = self.tag.value
-        dictionary['uuid'] = self.uuid
+        dictionary['packet_uuid'] = self.packet_uuid
+        dictionary['server_uuid'] = self.server_uuid
         dictionary['content'] = asdict(self.content)
         return dictionary
 
@@ -67,12 +71,9 @@ class Packet:
     def decode(cls, data: bytes) -> 'Packet':
         """Decodes a byte array into a packet ready to use. The content is kept as a dictionary.
         """
-        if len(data) < 4:
-            raise ValueError('Packet too short to decode length header.')
         data_length = int.from_bytes(data[0:4])
-        json_payload = data[4:4 + data_length]
-        dictionary = json.loads(json_payload.decode())
-        return cls(dictionary['content'], PacketTag(dictionary["tag"]), int(dictionary["uuid"]), data_length, )
+        dictionary = json.loads(data[4:].decode())
+        return cls(dictionary['content'], PacketTag(dictionary["tag"]), str(dictionary["packet_uuid"]), int(dictionary["server_uuid"]) , data_length)
 
 
 class UDPSocket(Thread):
@@ -108,7 +109,8 @@ class BroadcastSocket(Thread):
             response_handler: Callable[[Packet, tuple[str, int]], None] = None,
             response_timeout_handler: Callable = None,
             broadcast_port: int = 10002,
-            timeout_s: float = 10.0
+            timeout_s: float = 10.0,
+            send_attempts: int = 1
     ):
         super().__init__()
         self.timeout_s = timeout_s
@@ -118,6 +120,7 @@ class BroadcastSocket(Thread):
         self.future: Future[Optional[Packet]] = Future()
         self.response_handler = response_handler
         self.response_timeout_handler = response_timeout_handler
+        self.send_attempts = send_attempts
 
     def run(self):
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -125,7 +128,8 @@ class BroadcastSocket(Thread):
             udp_socket.settimeout(self.timeout_s)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-            udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
+            for i in range(self.send_attempts):
+                udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
 
             try:
                 data, addr = udp_socket.recvfrom(4096)
@@ -157,11 +161,11 @@ class BroadcastListener(Thread):
     """A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function."""
 
     def __init__(
-            self, 
-            port: int = 10002, 
+            self,
+            port: int = 10002,
             on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
             buffer_size: int = 65507,
-            uuid: int = -1
+            server_uuid: int = -1
     ):
         super().__init__(daemon=True)
 
@@ -170,17 +174,19 @@ class BroadcastListener(Thread):
         if not callable(on_message):
             raise TypeError("on_message must be callable.")
 
-        self.uuid = uuid
+        self.server_uuid = server_uuid
         self.port = port
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
         self._stop_event = Event()
+        self.latest_uuids = deque(["" for _ in range(100)])
 
     def stop(self):
         self._stop_event.set()
 
     def run(self):
+        local_ip = self.get_local_ip()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -205,14 +211,24 @@ class BroadcastListener(Thread):
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
-                
-                if self.uuid != -1 and self.uuid == content.uuid:
+
+
+                if self.server_uuid != -1:
                     # if uuid is provided then ignore msgs from myself
-                    continue
-                
+                    if self.server_uuid == content.server_uuid:
+                        continue
+
+                    # if packet uuid has been seen before lately, ignore
+                    if content.packet_uuid in self.latest_uuids:
+                        continue
+                    else:
+                        self.latest_uuids.appendleft(content.packet_uuid)
+                        self.latest_uuids.pop()
+
                 response_packet: Packet = self.on_message(content, addr)
                 if response_packet:
                     sock.sendto(response_packet.encode(), addr)
+
 
         finally:
             sock.close()
@@ -220,7 +236,7 @@ class BroadcastListener(Thread):
     @staticmethod
     def get_local_ip():
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Connect to a dummy address (8.8.8.8) to trigger the OS 
+            # Connect to a dummy address (8.8.8.8) to trigger the OS
             # to pick the correct outgoing interface. No data is actually sent.
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
@@ -240,6 +256,8 @@ class _TCPConnection:
         self._recv_queue: mp.Queue = recv_queue
 
         self._stop_event = mp.Event()
+
+
 
         self.socket: Optional[socket.socket] = None
 
