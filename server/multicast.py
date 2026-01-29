@@ -24,12 +24,12 @@ class MulticastPacket:
     def pack(self) -> bytes:
         uuid = self.sender_uuid.bytes
         chars = bytearray(self.content.encode('utf-8'))
-        return struct.pack(MulticastPacket.get_format_str(), (uuid, self.sequence_number, chars))
+        return struct.pack(MulticastPacket.get_format_str(), uuid, self.sequence_number, chars)
 
     @staticmethod
     def unpack(data: bytes) -> MulticastPacket:
         tuple = struct.unpack(MulticastPacket.get_format_str(), data)
-        uuid = UUID(tuple[0])
+        uuid = UUID(bytes=tuple[0])
         sequence_number = tuple[1]
         content = tuple[2].decode("utf-8")
         return MulticastPacket(uuid, sequence_number, content)
@@ -58,7 +58,7 @@ class MulticastReceiver(Thread):
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
 
         while True:
-            data = self.socket.recv(1024) # TODO: make this not fixed
+            data = self.socket.recv(10240) # TODO: make this not fixed
             msg = MulticastPacket.unpack(data)
             
             self.lock.acquire()
@@ -125,44 +125,51 @@ class Multicast:
     IPC_RECV_PORT = 6001
 
     uuid: UUID
+    
+    _sender: MulticastSender
+    _receiver: MulticastReceiver
+    _receive_handler: Thread
 
-    _msgs: list[MulticastPacket]
     _sequence_number: int
     _received_tracker: dict[UUID, int]
     
     _hold_back_queue: list[MulticastPacket]
 
     def __init__(self, uuid) -> None:
-        self._msgs = []
-        
         self.uuid = uuid;
+        
+        self._sequence_number = 0
+        self._received_tracker = {}
+        self._hold_back_queue = []
 
         self._sender = MulticastSender(self.GROUP, self.PORT, self.IPC_SEND_PORT)
-        self._sender.start()
-
         self._receiver = MulticastReceiver(self.GROUP, self.PORT, self.IPC_RECV_PORT)
+        
+        self._sender.start()
         self._receiver.start()
 
         self._receive_handler = Thread(target=self._receive_handler, args=())
         self._receive_handler.start()
 
     def cast_msg(self, msg: str):
-        self._basic_multicast(MulticastPacket(msg))
+        self._basic_multicast(msg)
 
     def _receive_handler(self):
         while True:
             if self._receiver.has_msgs():
                 msg = self._receiver.get()
+                print("RECV: " + str(msg.sequence_number))
                 self._on_receive(msg)
 
     # basic multicast
     def _on_receive(self, msg: MulticastPacket):
         tracker = self._received_tracker.get(msg.sender_uuid)
         if msg.sequence_number == tracker or tracker == None:
-            self._received_tracker[msg.sender_uuid] = tracker + 1
+            self._received_tracker[msg.sender_uuid] = msg.sequence_number + 1
+
             self._basic_deliver(msg)
-            
-            # TODO: clear hold back queue
+
+            self._clear_hold_back_queue(msg.sender_uuid)
 
         elif msg.sequence_number > tracker:
             # TODO: request missing message
@@ -170,17 +177,27 @@ class Multicast:
 
         # else ignore duplicate msg
 
-    def _basic_multicast(self, msg: MulticastPacket):
-        msg.sender_uuid = self.uuid
-        msg.sequence_number = self._sequence_number
+    def _basic_multicast(self, content: str):
+        msg = MulticastPacket(self.uuid, self._sequence_number, content)
+
+        self._sequence_number += 1
         self._sender.send(msg)
-    
+
     def _basic_deliver(self, msg: MulticastPacket):
-        print(msg.content)
+        #if msg.sender_uuid != self.uuid:
+            print("Deliver: "+ str(msg.sequence_number) + " > " + msg.content)
 
-    def _on_basic_deliver(self, msg):
-        # ignore duplicates
-        if msg in self._msgs:
-            return
+    def _clear_hold_back_queue(self, sender_uuid: UUID):
+        tracker = self._received_tracker.get(sender_uuid)
+        next = None
+        for msg in self._hold_back_queue:
+            if msg.sender_uuid != sender_uuid:
+                continue
 
-        self._msgs.append(msg)
+            if msg.sequence_number == tracker:
+                next = msg
+                break
+
+        if next != None:
+            self._hold_back_queue.remove(next)
+            self._on_receive(next)
