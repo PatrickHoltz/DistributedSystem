@@ -1,8 +1,6 @@
 """Provides everything needed for multicasting messages"""
 import socket
 import struct
-import threading
-import time
 
 from dataclasses import dataclass
 from uuid import UUID
@@ -17,26 +15,26 @@ class MulticastPacket:
     #sequence_number: int
     #received_tracker: list[int]
     
-    test: str
+    content: str
     
     @staticmethod
     def get_format_str() -> str:
         return '!1024s' # TODO: make this not fixed
     
     def pack(self) -> bytes:
-        chars = bytearray(self.test.encode('utf-8'))
+        chars = bytearray(self.content.encode('utf-8'))
         return struct.pack(MulticastPacket.get_format_str(), (chars))
 
     @staticmethod
     def unpack(data: bytes) -> MulticastPacket:
         tuple = struct.unpack(MulticastPacket.get_format_str(), data)
-        test = tuple[0].decode("utf-8")
-        return MulticastPacket(test)
+        content = tuple[0].decode("utf-8")
+        return MulticastPacket(content)
         
         
 
 class MulticastReceiver(Thread):
-    """Creates a new process for handling incoming multicast packages"""
+    """Creates a new thread for handling incoming multicast packages"""
     
     msg_queue: list[MulticastPacket]
     lock: Lock
@@ -80,7 +78,7 @@ class MulticastReceiver(Thread):
         return msg
 
 class MulticastSender(Thread):
-    """Creates a new process for sending multicast packages"""
+    """Creates a new thread for sending multicast packages"""
 
     # how many network hops the msg will take (see https://www.tldp.org/HOWTO/Multicast-HOWTO-6.html)
     MULTICAST_TTL = 1
@@ -117,7 +115,7 @@ class MulticastSender(Thread):
         
 
 class Multicast:
-    """"""
+    """Class for sending and receiving reliably ordered (FIFO) multicasts"""
 
     GROUP = '224.0.0.1'
     PORT = 5007
@@ -125,50 +123,37 @@ class Multicast:
     IPC_SEND_PORT = 6000
     IPC_RECV_PORT = 6001
 
-    msgs: list[MulticastPacket]
-    sequence_number: int
-    received_tracker: dict[UUID, int]
+    _msgs: list[MulticastPacket]
+    _sequence_number: int
+    _received_tracker: dict[UUID, int]
 
     def __init__(self) -> None:
-        self.msgs = []
+        self._msgs = []
 
-        self.sender = MulticastSender(self.GROUP, self.PORT, self.IPC_SEND_PORT)
-        self.sender.start()
+        self._sender = MulticastSender(self.GROUP, self.PORT, self.IPC_SEND_PORT)
+        self._sender.start()
 
-        self.receiver = MulticastReceiver(self.GROUP, self.PORT, self.IPC_RECV_PORT)
-        self.receiver.start()
+        self._receiver = MulticastReceiver(self.GROUP, self.PORT, self.IPC_RECV_PORT)
+        self._receiver.start()
 
-        t = threading.Thread(target=self.testing, args=())
-        t.start()
+        self._on_receive = Thread(target=self._receive_handler, args=())
+        self._on_receive.start()
 
+    def cast_msg(self, msg: str):
+        self._sender.send(MulticastPacket(msg))
+
+    def _receive_handler(self):
         while True:
-            if self.receiver.has_msgs():
-                msg = self.receiver.get()
-                print("> NEW MSG: " + msg.test)
-
-    def testing(self) -> None:
-        time.sleep(3)
-        self.sender.send(MulticastPacket("TEST"))
-        time.sleep(3)
-        self.sender.send(MulticastPacket("FOO"))
-        self.sender.send(MulticastPacket("BAR"))
-        time.sleep(3)
-
-    def cast_msg(self, msg):
-        pass
-
-    def _on_basic_deliver(self, msg):
-        # ignore duplicates
-        if msg in self.msgs:
-            return
-
-        self.msgs.append(msg)
-
-    def _on_receive(self, msg):
-        print(msg)
-        pass
+            if self._receiver.has_msgs():
+                msg = self._receiver.get()
+                print("> NEW MSG: " + msg.content)
+        
         #match(msg):
         #    case (msg.sequence_number == )
 
-    def _create_receive_socket(self):
-        pass
+    def _on_basic_deliver(self, msg):
+        # ignore duplicates
+        if msg in self._msgs:
+            return
+
+        self._msgs.append(msg)
