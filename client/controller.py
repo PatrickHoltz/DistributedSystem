@@ -66,17 +66,17 @@ class ConnectionService(TCPClientConnection):
                 self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
                 return
 
-            if packet.tag == PacketTag.NEW_BOSS:
-                typed_packet = TCPClientConnection.get_typed_packet(packet, BossData)
+            if packet.tag == PacketTag.NEW_MONSTER:
+                typed_packet = TCPClientConnection.get_typed_packet(packet, MonsterData)
                 if typed_packet:
-                    print("New boss received:", typed_packet.content)
-                    self._client_game_state.boss.update(typed_packet.content)
-                    self.dispatcher.emit(Events.NEW_BOSS, self._client_game_state)
+                    print("New monster received:", typed_packet.content)
+                    self._client_game_state.monster.update(typed_packet.content)
+                    self.dispatcher.emit(Events.NEW_MONSTER, self._client_game_state)
                 return
 
-            if packet.tag == PacketTag.BOSS_DEAD:
+            if packet.tag == PacketTag.MONSTER_DEAD:
                 # assume content is a simple string
-                self._client_game_state.boss.set_dead()
+                self._client_game_state.monster.set_dead()
                 return
 
             print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
@@ -130,10 +130,10 @@ class GameController:
 
     def on_attack_clicked(self):
         """Callback for when the attack button is clicked."""
-        self.client_game_state.attack_boss()
+        self.client_game_state.attack_monster()
         self._connection_service.send_attack()
         self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, [])
-        return self.client_game_state.boss
+        return self.client_game_state.monster
 
     def on_logout_clicked(self):
         if self._connection_service:
