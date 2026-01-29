@@ -1,10 +1,8 @@
 import multiprocessing as mp
-
 import time
-import uuid
 
 from shared.data import *
-from shared.sockets import Packet, PacketTag, BroadcastListener, BroadcastSocket, TCPServerConnection
+from shared.sockets import Packet, PacketTag, BroadcastListener, TCPServerConnection
 
 
 class GameStateManager:
@@ -73,13 +71,13 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: 'ServerLoop', uuid: int = -1):
+    def __init__(self, server_loop: 'ServerLoop', server_uuid: int = -1):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
         self.login_listener = BroadcastListener(
             on_message=self.handle_login,
-            uuid=uuid)
+            server_uuid=server_uuid)
         self.login_listener.start()
 
         self.server_loop = server_loop
@@ -137,16 +135,6 @@ class ConnectionManager:
 
     def handle_login(self, packet: Packet, address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
-        
-        #leader messages
-        if packet.tag in {
-            PacketTag.SERVER_HELLO,
-            PacketTag.BULLY_ELECTION,
-            PacketTag.BULLY_OK,
-            PacketTag.BULLY_COORDINATOR,
-            PacketTag.BULLY_LEADER_HEARTBEAT,
-        }:
-            return self.server_loop.handle_leader_message(packet, address)
 
         if packet.tag == PacketTag.LOGIN:
             try:
