@@ -1,19 +1,17 @@
 """This module contains classes for sending packets in different forms."""
 
-import socket
-from collections import deque
-from threading import Thread, Event
-import multiprocessing as mp
-from concurrent.futures import Future
 import json
-from dataclasses import asdict, is_dataclass
-import struct
+import multiprocessing as mp
 import queue
-from typing import Optional, Tuple, Callable, TypeVar, Type
+import socket
+import struct
+from collections import deque
+from concurrent.futures import Future
+from dataclasses import asdict, is_dataclass
 from enum import StrEnum
-from uuid import uuid4, UUID
-
-from shared.utils import Debug
+from threading import Thread, Event
+from typing import Optional, Tuple, Callable, TypeVar, Type
+from uuid import uuid4
 
 
 class PacketTag(StrEnum):
@@ -217,7 +215,6 @@ class BroadcastListener(Thread):
 
                 # if server_uuid is provided then ignore msgs by myself
                 if self.server_uuid != -1 and self.server_uuid == content.server_uuid:
-                        #Debug.log("Ignoring broadcast to myself")
                         continue
 
                 # if packet uuid has been seen before lately, ignore

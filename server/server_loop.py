@@ -1,14 +1,12 @@
 import multiprocessing as mp
-import random
 import threading
 import time
-
+from threading import Lock, Timer
 from uuid import UUID, uuid4
-from threading import Thread, Lock, Timer
 
 from server_logic import ConnectionManager, GameStateManager
-from shared.sockets import Packet, PacketTag, BroadcastSocket, BroadcastListener
 from shared.data import *
+from shared.sockets import Packet, PacketTag, BroadcastSocket, BroadcastListener
 from shared.utils import Debug
 
 
@@ -52,8 +50,6 @@ class ServerLoop:
         self.election_timer: Timer | None = None
         self.bully_heartbeat_timer: Timer | None= None
 
-        # self.timeout_jitter = random.uniform(0.0, 3.0)
-
         self.bully_listener = BroadcastListener(on_message=self.handle_leader_message,
                                                 server_uuid=UUID(self.server_uuid).int)
         self.bully_listener.start()
@@ -81,7 +77,7 @@ class ServerLoop:
                 self._next_hb += self.BULLY_HEARTBEAT_INTERVAL
                 hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT,
                             server_uuid=UUID(self.server_uuid).int)
-                Debug.log(f"Sending leader heartbeat.", "LEADER")
+                # Debug.log(f"Sending leader heartbeat.", "LEADER")
                 BroadcastSocket(hb, broadcast_port=10002, timeout_s=0.15, send_attempts=3).start()
 
             time.sleep(self.tick_rate)
@@ -170,7 +166,6 @@ class ServerLoop:
     def handle_leader_message(self, packet: Packet, address: tuple[str, int]):
         def gt(a: str, b: str) -> bool:
             return UUID(a).int > UUID(b).int
-            return a > b
 
         match packet.tag:
             # election larger id answers
