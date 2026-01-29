@@ -13,6 +13,8 @@ from typing import Optional, Tuple, Callable, TypeVar, Type
 from enum import StrEnum
 from uuid import uuid4, UUID
 
+from shared.utils import Debug
+
 
 class PacketTag(StrEnum):
     NONE = "none"
@@ -38,11 +40,11 @@ class Packet:
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = str(uuid4()), server_uuid: int = -1, length: int = 0):
+    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = None, server_uuid: int = -1, length: int = 0):
         """Content must be a dataclass"""
         self.content = content
         self.tag = tag
-        self.packet_uuid = packet_uuid
+        self.packet_uuid = str(uuid4()) if packet_uuid is None else packet_uuid
         self.server_uuid = server_uuid
         
         self._length = length
@@ -213,17 +215,17 @@ class BroadcastListener(Thread):
                     continue
 
 
-                if self.server_uuid != -1:
-                    # if uuid is provided then ignore msgs from myself
-                    if self.server_uuid == content.server_uuid:
+                # if server_uuid is provided then ignore msgs by myself
+                if self.server_uuid != -1 and self.server_uuid == content.server_uuid:
+                        #Debug.log("Ignoring broadcast to myself")
                         continue
 
-                    # if packet uuid has been seen before lately, ignore
-                    if content.packet_uuid in self.latest_uuids:
-                        continue
-                    else:
-                        self.latest_uuids.appendleft(content.packet_uuid)
-                        self.latest_uuids.pop()
+                # if packet uuid has been seen before lately, ignore
+                if content.packet_uuid in self.latest_uuids:
+                    continue
+                else:
+                    self.latest_uuids.appendleft(content.packet_uuid)
+                    self.latest_uuids.pop()
 
                 response_packet: Packet = self.on_message(content, addr)
                 if response_packet:
