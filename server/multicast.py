@@ -11,27 +11,28 @@ from shared.sockets import Packet
 @dataclass
 class MulticastPacket:
     """Contains all the data needed for handling multicast packages"""
-    #packet: Packet
-    #sequence_number: int
-    #received_tracker: list[int]
-    
+    sender_uuid: UUID
+    sequence_number: int
+
+    # contains the actually send msg
     content: str
-    
+
     @staticmethod
     def get_format_str() -> str:
-        return '!1024s' # TODO: make this not fixed
-    
+        return '!16si1024s' # TODO: make this not fixed
+
     def pack(self) -> bytes:
+        uuid = self.sender_uuid.bytes
         chars = bytearray(self.content.encode('utf-8'))
-        return struct.pack(MulticastPacket.get_format_str(), (chars))
+        return struct.pack(MulticastPacket.get_format_str(), (uuid, self.sequence_number, chars))
 
     @staticmethod
     def unpack(data: bytes) -> MulticastPacket:
         tuple = struct.unpack(MulticastPacket.get_format_str(), data)
-        content = tuple[0].decode("utf-8")
-        return MulticastPacket(content)
-        
-        
+        uuid = UUID(tuple[0])
+        sequence_number = tuple[1]
+        content = tuple[2].decode("utf-8")
+        return MulticastPacket(uuid, sequence_number, content)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
@@ -123,12 +124,18 @@ class Multicast:
     IPC_SEND_PORT = 6000
     IPC_RECV_PORT = 6001
 
+    uuid: UUID
+
     _msgs: list[MulticastPacket]
     _sequence_number: int
     _received_tracker: dict[UUID, int]
+    
+    _hold_back_queue: list[MulticastPacket]
 
-    def __init__(self) -> None:
+    def __init__(self, uuid) -> None:
         self._msgs = []
+        
+        self.uuid = uuid;
 
         self._sender = MulticastSender(self.GROUP, self.PORT, self.IPC_SEND_PORT)
         self._sender.start()
@@ -136,20 +143,40 @@ class Multicast:
         self._receiver = MulticastReceiver(self.GROUP, self.PORT, self.IPC_RECV_PORT)
         self._receiver.start()
 
-        self._on_receive = Thread(target=self._receive_handler, args=())
-        self._on_receive.start()
+        self._receive_handler = Thread(target=self._receive_handler, args=())
+        self._receive_handler.start()
 
     def cast_msg(self, msg: str):
-        self._sender.send(MulticastPacket(msg))
+        self._basic_multicast(MulticastPacket(msg))
 
     def _receive_handler(self):
         while True:
             if self._receiver.has_msgs():
                 msg = self._receiver.get()
-                print("> NEW MSG: " + msg.content)
-        
-        #match(msg):
-        #    case (msg.sequence_number == )
+                self._on_receive(msg)
+
+    # basic multicast
+    def _on_receive(self, msg: MulticastPacket):
+        tracker = self._received_tracker.get(msg.sender_uuid)
+        if msg.sequence_number == tracker or tracker == None:
+            self._received_tracker[msg.sender_uuid] = tracker + 1
+            self._basic_deliver(msg)
+            
+            # TODO: clear hold back queue
+
+        elif msg.sequence_number > tracker:
+            # TODO: request missing message
+            self._hold_back_queue.append(msg)
+
+        # else ignore duplicate msg
+
+    def _basic_multicast(self, msg: MulticastPacket):
+        msg.sender_uuid = self.uuid
+        msg.sequence_number = self._sequence_number
+        self._sender.send(msg)
+    
+    def _basic_deliver(self, msg: MulticastPacket):
+        print(msg.content)
 
     def _on_basic_deliver(self, msg):
         # ignore duplicates
