@@ -93,12 +93,12 @@ class ConnectionManager:
         self.broadcast_listener.start()
 
         # handles regular login requests to the assigned server
-        self.client_listener = ClientListener(self)
+        self.client_listener = TCPListener(self)
         self.client_listener.start()
 
         # wait until client listener started to obtain the listener address
-        listener_address = self.client_listener.get_address()
-        self.server_info = ServerInfo(server_uuid, 0, listener_address[0], listener_address[1])
+        self.listener_address = self.client_listener.get_address()
+        self.server_info = ServerInfo(server_uuid, 0, self.listener_address[0], self.listener_address[1])
 
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
@@ -233,8 +233,8 @@ class ClientCommunicator(TCPServerConnection):
         self._recv_queue.put((self._username, typed_packet))
 
 
-class ClientListener(_TCPConnection, Thread):
-    """A socket which accepts incoming connections if they deliver a login packet with them."""
+class TCPListener(_TCPConnection, Thread):
+    """A socket which accepts incoming tcp connections if they deliver a login packet with them."""
 
     def __init__(self, connection_manager: ConnectionManager):
         super().__init__(mp.Queue())

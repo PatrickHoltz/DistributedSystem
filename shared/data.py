@@ -76,10 +76,14 @@ class OkMessage:
 @dataclass
 class CoordinatorMessage:
     leader_uuid: str
+    leader_ip: str
+    leader_port: int
 
 @dataclass
 class LeaderHeartbeat:
     leader_uuid: str
+    leader_ip: str
+    leader_port: int
 
 @dataclass
 class ServerInfo:

@@ -16,6 +16,8 @@ class ServerLoop:
     """Main server loop handling incoming and outgoing messages. Runs a tick-based loop processing incoming messages and sending outgoing messages every tick."""
     MAX_MESSAGES_PER_TICK = 50
 
+    SERVER_TO_LEADER_HEARTBEAT_INTERVAL = 1.0
+
     BULLY_HEARTBEAT_INTERVAL = 1.0
     BULLY_HEARTBEAT_TIMEOUT = 4.0
     BULLY_ELECTION_OK_WAIT = 4.0
@@ -39,7 +41,7 @@ class ServerLoop:
         self.tick_rate = 0.1  # ticks per second
 
         self.leader_uuid: str | None = None
-        self.leader_addr: Tuple[str, int] | None = None
+        self.leader_addr: Tuple[str, int] | None = self.connection_manager.listener_address
         self.is_leader: bool = False
         self.election_in_progress: bool = False
 
@@ -59,7 +61,8 @@ class ServerLoop:
                                                 server_uuid=UUID(self.server_uuid).int)
         self.bully_listener.start()
 
-        Debug.log(f"Started new server with UUID<{self.server_uuid}>", "Server")
+        Debug.log(f"Started new server on {self.connection_manager.listener_address[0]}:{self.connection_manager.listener_address[1]}",
+                  "SERVER", f"{self.server_uuid}")
         self.run()
 
     def run(self):
@@ -76,14 +79,6 @@ class ServerLoop:
             self._send_outgoing_messages()
 
             # self.connection_manager.tick_client_heartbeat(now)
-
-            # leader sends heartbeat
-            if self.is_leader and now >= self._next_hb:
-                self._next_hb += self.BULLY_HEARTBEAT_INTERVAL
-                hb = Packet(LeaderHeartbeat(leader_uuid=self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT,
-                            server_uuid=UUID(self.server_uuid).int)
-                # Debug.log(f"Sending leader heartbeat.", "LEADER")
-                BroadcastSocket(hb, broadcast_port=10002, timeout_s=0.15, send_attempts=3).start()
 
             time.sleep(self.tick_rate)
 
@@ -214,7 +209,7 @@ class ServerLoop:
 
             # a leader is announced
             case PacketTag.BULLY_COORDINATOR:
-                leader_uuid = packet.content["leader_uuid"]
+                leader_info = ServerInfo(**packet.content)
 
                 self._restart_leader_heartbeat_timer()
 
@@ -226,11 +221,11 @@ class ServerLoop:
                 #            return None
 
                 # not self leader
-                if leader_uuid != self.server_uuid and gt(leader_uuid, self.server_uuid):
+                if leader_info.server_uuid != self.server_uuid and gt(leader_info.server_uuid, self.server_uuid):
                     if self.coordinator_timer:
                         self.coordinator_timer.cancel()
 
-                    self._accept_leader(leader_uuid, address)
+                    self._accept_leader(leader_info.server_uuid, (leader_info.ip, leader_info.listening_port))
 
                 # if im higher than announced leader I will take over
                 # if gt(self.server_uuid, leader_uuid):
@@ -244,17 +239,17 @@ class ServerLoop:
 
             # if leader lives: but leader has lower uuid than own uuid start new election
             case PacketTag.BULLY_LEADER_HEARTBEAT:
-                leader_uuid = packet.content["leader_uuid"]
+                leader_info = ServerInfo(**packet.content)
 
                 # if leader_uuid == self.server_uuid:
                 #     return None
 
-                # Debug.log(f"Received leader heartbeat from <{leader_uuid}>", "SERVER", "BULLY")
+                Debug.log(f"Received leader heartbeat from <{leader_info.server_uuid}>", "SERVER", "BULLY")
 
                 self._restart_leader_heartbeat_timer()
 
                 # ignore weaker heartbeat
-                if gt(self.server_uuid, leader_uuid):
+                if gt(self.server_uuid, leader_info.server_uuid):
                     with self._election_lock:
                         if self.election_in_progress:
                             Debug.log("Ignoring weaker heartbeat <{leader_uuid}> during my election", "SERVER",
@@ -262,8 +257,8 @@ class ServerLoop:
                             return None
 
                 # accept heartbeat
-                elif self.leader_uuid != leader_uuid:
-                    self._accept_leader(leader_uuid, address)
+                if self.leader_uuid != leader_info.server_uuid:
+                    self._accept_leader(leader_info.server_uuid, (leader_info.ip, leader_info.listening_port))
 
                 return None
 
@@ -305,7 +300,7 @@ class ServerLoop:
             self._next_hb = time.monotonic()
 
         # leader changed
-        if old_leader_uuid != leader_uuid:
+        if old_leader_uuid is None or old_leader_uuid != leader_uuid:
             self._on_leader_changed()
         Debug.log(f"Accepting leader <{self.leader_uuid}> {'(myself)' if self.is_leader else ''}", "SERVER",
                   "BULLY")
@@ -319,9 +314,10 @@ class ServerLoop:
 
         self._last_leader_seen = time.monotonic()
         self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
+        self._on_leader_changed()
 
         coord_packet = Packet(
-            CoordinatorMessage(leader_uuid=self.server_uuid),
+            self.connection_manager.server_info,
             tag=PacketTag.BULLY_COORDINATOR,
             server_uuid=UUID(self.server_uuid).int
         )
@@ -352,16 +348,14 @@ class ServerLoop:
         self.election_timer = threading.Timer(self.BULLY_ELECTION_OK_WAIT, self._become_leader)
         self.election_timer.start()
 
-    def get_heartbeat_packet(self):
-        if not self._heartbeat is None:
-            self._heartbeat.stop()
-
+    def get_heartbeat_packet(self) -> Packet:
+        """Returns the correct heartbeat packet depending on weather this server is the leader or not."""
+        server_info = self.connection_manager.server_info
         if self.is_leader:
-            return Packet(LeaderHeartbeat(self.server_uuid), tag=PacketTag.BULLY_LEADER_HEARTBEAT)
+            return Packet(server_info, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
 
         else:
-            server_info = self.connection_manager.server_info
-            return Packet(server_info, tag=PacketTag.SERVER_HEARTBEAT)
+            return Packet(server_info, tag=PacketTag.SERVER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
 
     def _on_leader_changed(self):
         """Callback when the leader changes. Initializes a new heartbeat based on being a leader or not."""
@@ -369,8 +363,9 @@ class ServerLoop:
             self._heartbeat.stop()
 
         if self.is_leader:
-            # broadcast heartbeat
-            self._heartbeat = Heartbeat(self.get_heartbeat_packet, 0.15)
+            # broadcast leader heartbeat
+            self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL)
         else:
             # tcp heartbeat to leader
-            self._heartbeat = Heartbeat(self.get_heartbeat_packet, 0.15, self.leader_addr[0], self.leader_addr[1])
+            self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_addr[0], self.leader_addr[1])
+        self._heartbeat.start()
