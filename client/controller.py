@@ -7,6 +7,7 @@ from model import ClientGameState
 from shared.data import *
 from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
 from shared.packet import PacketTag, Packet
+from shared.utils import Debug
 
 
 class LoginService:
@@ -51,41 +52,39 @@ class ConnectionService(TCPClientConnection):
 
     def _handle_packet(self, packet: Packet):
         try:
-            if packet.tag == PacketTag.LOGIN_CONFIRM:
-                game_state = PlayerGameStateData.from_dict(packet.content)
-                self._client_game_state.update(game_state)
-                print(f"You are now logged in as {self._username}")
-                self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
+            match packet.tag:
+                case PacketTag.LOGIN_CONFIRM:
+                    game_state = PlayerGameStateData.from_dict(packet.content)
+                    self._client_game_state.update(game_state)
+                    print(f"You are now logged in as {self._username}")
+                    self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
 
-            # handle the same tags as before
-            if packet.tag == PacketTag.CLIENT_PING:
-                pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
-                self.send(pong)
-                return
+                # handle the same tags as before
+                case PacketTag.CLIENT_PING:
+                    pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
+                    self.send(pong)
 
-            if packet.tag == PacketTag.CLIENT_PONG:
-                return
+                case PacketTag.CLIENT_PONG:
+                    Debug.log("Pong received", "CLIENT")
 
-            if packet.tag == PacketTag.PLAYER_GAME_STATE:
-                game_state = PlayerGameStateData.from_dict(packet.content)
-                self._client_game_state.update(game_state)
-                self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
-                return
+                case PacketTag.PLAYER_GAME_STATE:
+                    game_state = PlayerGameStateData.from_dict(packet.content)
+                    self._client_game_state.update(game_state)
+                    self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
 
-            if packet.tag == PacketTag.NEW_BOSS:
-                typed_packet = SocketUtils.get_typed_packet(packet, BossData)
-                if typed_packet:
-                    print("New boss received:", typed_packet.content)
-                    self._client_game_state.boss.update(typed_packet.content)
-                    self.dispatcher.emit(Events.NEW_BOSS, self._client_game_state)
-                return
+                case PacketTag.NEW_BOSS:
+                    typed_packet = SocketUtils.get_typed_packet(packet, BossData)
+                    if typed_packet:
+                        print("New boss received:", typed_packet.content)
+                        self._client_game_state.boss.update(typed_packet.content)
+                        self.dispatcher.emit(Events.NEW_BOSS, self._client_game_state)
 
-            if packet.tag == PacketTag.BOSS_DEAD:
-                # assume content is a simple string
-                self._client_game_state.boss.set_dead()
-                return
+                case PacketTag.BOSS_DEAD:
+                    # assume content is a simple string
+                    self._client_game_state.boss.set_dead()
 
-            print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+                case _:
+                    print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
 
         except Exception as e:
             print("Error handling packet:", e)

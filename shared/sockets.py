@@ -1,14 +1,16 @@
 """This module contains classes for sending packets in different forms."""
 
-import socket
-from threading import Thread, Event
-import multiprocessing as mp
-from concurrent.futures import Future
 import json
-import struct
+import multiprocessing as mp
 import queue
-from typing import Optional, Tuple, Callable, TypeVar, Type, override
+import socket
+import struct
 import time
+from collections import deque
+from concurrent.futures import Future
+from threading import Thread, Event
+from typing import Optional, Callable, TypeVar, Type
+from typing import override
 
 from shared.packet import Packet
 
@@ -42,6 +44,16 @@ class SocketUtils:
         json_bytes = cls.recv_exact(data_length, sock)
         packet = Packet.decode(length_bytes + json_bytes)
         return packet
+
+    @classmethod
+    def get_local_ip(cls):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Doesn't need to be reachable
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
 
 
     # TODO use this method everywhere where packets are being received. Also make Packet generic
@@ -91,7 +103,8 @@ class BroadcastSocket(Thread):
             response_handler: Callable[[Packet, tuple[str, int]], None] = None,
             response_timeout_handler: Callable = None,
             broadcast_port: int = 10002,
-            timeout_s: float = 10.0
+            timeout_s: float = 10.0,
+            send_attempts: int = 1
     ):
         super().__init__()
         self.timeout_s = timeout_s
@@ -101,6 +114,7 @@ class BroadcastSocket(Thread):
         self.future: Future[Optional[Packet]] = Future()
         self.response_handler = response_handler
         self.response_timeout_handler = response_timeout_handler
+        self.send_attempts = send_attempts
 
     def run(self):
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -108,7 +122,8 @@ class BroadcastSocket(Thread):
             udp_socket.settimeout(self.timeout_s)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-            udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
+            for i in range(self.send_attempts):
+                udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
 
             try:
                 data, addr = udp_socket.recvfrom(4096)
@@ -140,11 +155,11 @@ class BroadcastListener(Thread):
     """A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function."""
 
     def __init__(
-            self, 
-            port: int = 10002, 
+            self,
+            port: int = 10002,
             on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
             buffer_size: int = 65507,
-            uuid: int = -1
+            server_uuid: int = -1
     ):
         super().__init__(daemon=True)
 
@@ -153,12 +168,13 @@ class BroadcastListener(Thread):
         if not callable(on_message):
             raise TypeError("on_message must be callable.")
 
-        self.uuid = uuid
+        self.server_uuid = server_uuid
         self.port = port
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
         self._stop_event = Event()
+        self.latest_uuids = deque(["" for _ in range(100)])
 
     def stop(self):
         self._stop_event.set()
@@ -189,11 +205,19 @@ class BroadcastListener(Thread):
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
-                
-                if self.uuid != -1 and self.uuid == content.uuid:
-                    # if uuid is provided then ignore msgs from myself
+
+
+                # if server_uuid is provided then ignore msgs by myself
+                if self.server_uuid != -1 and self.server_uuid == content.server_uuid:
+                        continue
+
+                # if packet uuid has been seen before lately, ignore
+                if content.packet_uuid in self.latest_uuids:
                     continue
-                
+                else:
+                    self.latest_uuids.appendleft(content.packet_uuid)
+                    self.latest_uuids.pop()
+
                 response_packet: Packet = self.on_message(content, addr)
                 if response_packet:
                     sock.sendto(response_packet.encode(), addr)
@@ -205,7 +229,7 @@ class BroadcastListener(Thread):
     @staticmethod
     def get_local_ip():
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Connect to a dummy address (8.8.8.8) to trigger the OS 
+            # Connect to a dummy address (8.8.8.8) to trigger the OS
             # to pick the correct outgoing interface. No data is actually sent.
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
@@ -299,11 +323,13 @@ class TCPClientConnection(_TCPConnection, Thread):
 
     T = TypeVar('T')
 
-    def __init__(self):
+    def __init__(self, address: tuple[str, int]):
         """
         Initializes a TCP client which connects to the specified address.
         """
         super().__init__(queue.Queue())
+
+        self.address = address
 
     def run(self):
         # Establish connection
@@ -339,7 +365,7 @@ class TCPServerConnection(_TCPConnection, Thread):
         """
         Initializes a TCP server which listens on the specified address.
         """
-        super().__init__(None, recv_queue)
+        super().__init__(recv_queue)
         self.backlog = backlog
         self.socket = conn_socket
 

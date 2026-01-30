@@ -2,6 +2,7 @@ import json
 import struct
 from dataclasses import is_dataclass, asdict
 from enum import StrEnum
+from uuid import uuid4
 
 
 class PacketTag(StrEnum):
@@ -33,16 +34,17 @@ class PacketTag(StrEnum):
     SERVER_HEARTBEAT = "server_heartbeat"
 
 
-
 class Packet:
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, uuid: int = -1, length: int = 0):
+    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = None,
+                 server_uuid: int = -1, length: int = 0):
         """Content must be a dataclass"""
         self.content = content
         self.tag = tag
-        self.uuid = uuid
+        self.packet_uuid = str(uuid4()) if packet_uuid is None else packet_uuid
+        self.server_uuid = server_uuid
 
         self._length = length
 
@@ -51,7 +53,8 @@ class Packet:
             raise TypeError("Could not encode packet. Packet content must be a dataclass.")
         dictionary = dict()
         dictionary['tag'] = self.tag.value
-        dictionary['uuid'] = self.uuid
+        dictionary['packet_uuid'] = self.packet_uuid
+        dictionary['server_uuid'] = self.server_uuid
         dictionary['content'] = asdict(self.content)
         return dictionary
 
@@ -71,4 +74,5 @@ class Packet:
         """
         data_length = int.from_bytes(data[0:4])
         dictionary = json.loads(data[4:].decode())
-        return cls(dictionary['content'], PacketTag(dictionary["tag"]), int(dictionary["uuid"]), data_length, )
+        return cls(dictionary['content'], PacketTag(dictionary["tag"]), str(dictionary["packet_uuid"]),
+                   int(dictionary["server_uuid"]), data_length)

@@ -1,17 +1,16 @@
 import multiprocessing as mp
-
-import time
-import uuid
-from threading import Thread
-from typing import override, Tuple
-
-from server.server_loop import ServerLoop
-from shared.data import *
-from shared.sockets import BroadcastListener, BroadcastSocket, TCPServerConnection, TCPClientConnection, _TCPConnection, \
-    SocketUtils
-from shared.packet import PacketTag, Packet
-from operator import attrgetter
 import socket
+import time
+from operator import attrgetter
+from threading import Thread
+from typing import override
+from uuid import UUID
+
+from shared.data import *
+from shared.packet import PacketTag, Packet
+from shared.sockets import BroadcastListener, TCPServerConnection, _TCPConnection, \
+    SocketUtils
+from shared.utils import Debug
 
 
 class GameStateManager:
@@ -81,40 +80,51 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: ServerLoop, uuid: int = -1):
+    def __init__(self, server_loop: 'ServerLoop', server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
+        self.server_loop: 'ServerLoop' = server_loop
+
+        # handles login requests to the leader
         self.broadcast_listener = BroadcastListener(
             on_message=self.handle_broadcast,
-            uuid=uuid)
+            server_uuid=UUID(server_uuid).int)
         self.broadcast_listener.start()
 
+        # handles regular login requests to the assigned server
         self.client_listener = ClientListener(self)
         self.client_listener.start()
 
         # wait until client listener started to obtain the listener address
-        self.listener_address = self.client_listener.get_address()
+        listener_address = self.client_listener.get_address()
+        self.server_info = ServerInfo(server_uuid, 0, listener_address[0], listener_address[1])
 
-        self.server_loop = server_loop
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
-        self.server_view: dict[str, ServerInfo] = {}
+        self.server_view: dict[str, ServerInfo] = {
+            self.server_loop.server_uuid: self.server_info
+        }
 
     def _assign_client(self) -> ServerInfo:
         """Returns the server info of the server which is occupied least"""
         least_used_server = min(self.server_view.values(), key=attrgetter('occupancy'))
         return least_used_server
 
-    def add_connection(self, username: str, address: tuple[str, int], conn_socket: socket.socket) -> int:
+    def add_connection(self, username: str, conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
         Returns the port number the client communicator is listening on.
         """
 
         self.server_loop.game_state_manager.login_player(username)
 
-        communicator = ClientCommunicator(("", 0), username, self.server_loop.in_queue)
+        communicator = ClientCommunicator(conn_socket, username, self.server_loop.in_queue)
         communicator.start()
+
+        # send login confirm
+        player_state = self.server_loop.game_state_manager.get_player_state(username)
+        login_confirm = Packet(player_state, tag=PacketTag.LOGIN_CONFIRM)
+        communicator.send(login_confirm)
 
         self.active_connections[username] = communicator
         self.last_seen[username] = time.monotonic()
@@ -122,7 +132,9 @@ class ConnectionManager:
         # Wait until the communicator is ready and retrieve its port
         server_port = communicator.get_port()
 
-        print("Client connection established for", username, "on port", server_port)
+        self.server_info.occupancy += 1
+
+        Debug.log(f"Client connection established for {username}.", "SERVER")
         return server_port
 
     def remove_connection(self, username: str):
@@ -133,6 +145,8 @@ class ConnectionManager:
             del self.active_connections[username]
         self.last_seen.pop(username, None)
         self.server_loop.game_state_manager.logout_player(username)
+
+        self.server_info.occupancy += 1
 
     def mark_seen(self, username: str):
         self.last_seen[username] = time.monotonic()
@@ -156,18 +170,8 @@ class ConnectionManager:
             print(f"Heartbeat timeout: {username}")
             self.remove_connection(username)
 
-    def handle_broadcast(self, packet: Packet, address: tuple[str, int]):
+    def handle_broadcast(self, packet: Packet, _address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
-
-        #leader messages
-        if packet.tag in {
-            PacketTag.SERVER_HELLO,
-            PacketTag.BULLY_ELECTION,
-            PacketTag.BULLY_OK,
-            PacketTag.BULLY_COORDINATOR,
-            PacketTag.BULLY_LEADER_HEARTBEAT,
-        }:
-            return self.server_loop.handle_leader_message(packet, address)
 
         if packet.tag == PacketTag.LOGIN:
             # Non leaders ignore login messages
@@ -176,7 +180,7 @@ class ConnectionManager:
 
             try:
                 login_data = LoginData(**packet.content)
-                print(f"Login request received by {login_data.username}")
+                Debug.log(f"Login request received by {login_data.username}", "LEADER")
 
                 server_info = self._assign_client()
                 login_reply = LoginReplyData(server_info.ip, server_info.listening_port, login_data.username)
@@ -200,8 +204,8 @@ class ClientCommunicator(TCPServerConnection):
         PacketTag.CLIENT_PING: StringMessage,
     }
 
-    def __init__(self, address: tuple[str, int], username: str, in_queue: mp.Queue):
-        super().__init__(in_queue)
+    def __init__(self, conn_socket: socket.socket, username: str, in_queue: mp.Queue):
+        super().__init__(conn_socket, in_queue)
 
         self._username = username
 
@@ -213,17 +217,17 @@ class ClientCommunicator(TCPServerConnection):
 
         # Abort if the packet tag is unknown
         if not data_class:
-            print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+            Debug.log(f"Unknown packet tag {packet.tag} received. Aborting packet.", "SERVER")
             return
 
         typed_packet = SocketUtils.get_typed_packet(packet, data_class)
 
         # Abort if the packet content could not be transformed into the appropriate data class
         if not typed_packet:
-            print(f"Corrupt packet received. Aborting packet.")
+            Debug.log(f"Corrupt packet received. Aborting packet.", "SERVER")
             return
 
-        print(f"Packet '{typed_packet.tag}' successfully received.")
+        Debug.log(f"Packet '{typed_packet.tag}' successfully received.", "SERVER")
         # Put the received, typed packet onto the shared in_queue so the
         # main ServerLoop process can consume it.
         self._recv_queue.put((self._username, typed_packet))
@@ -233,36 +237,39 @@ class ClientListener(_TCPConnection, Thread):
     """A socket which accepts incoming connections if they deliver a login packet with them."""
 
     def __init__(self, connection_manager: ConnectionManager):
-        super().__init__()
+        super().__init__(mp.Queue())
         self._connection_manager = connection_manager
 
         # Queue to communicate the actual port back to the parent process
         self.addr_queue = mp.Queue()
 
     def run(self):
-        listen_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        listen_sock.bind(("", 0))
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.bind(("0.0.0.0", 0))
 
         # set a high backlog so that no login request gets lost
-        listen_sock.listen(50)
+        self.socket.listen(50)
 
-        self.addr_queue.put(self.socket.getsockname())
+        local_ip = SocketUtils.get_local_ip()
+        self.addr_queue.put((local_ip, self.socket.getsockname()[1]))
 
         while True:
-            client_sock, client_addr = listen_sock.accept()
+            client_sock, client_addr = self.socket.accept()
 
             packet = SocketUtils.recv_packet(client_sock)
 
             if packet.tag == PacketTag.LOGIN:
                 login_data = LoginData(**packet.content)
-                self._connection_manager.add_connection(login_data.username, client_addr, client_sock)
+                self._connection_manager.add_connection(login_data.username, client_sock)
 
             # Also read server heartbeats
             if packet.tag == PacketTag.SERVER_HEARTBEAT and self._connection_manager.server_loop.is_leader:
                 server_info = ServerInfo(**packet.content)
+
+                Debug.log("Server heartbeat received.", "LEADER")
                 self._connection_manager.server_view[server_info.server_uuid] = server_info
 
 
-    def get_address(self) -> int:
+    def get_address(self) -> tuple[str, int]:
         """Returns the port the server is listening on. Blocks until the port is available."""
         return self.addr_queue.get()
