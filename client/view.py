@@ -89,6 +89,8 @@ class LoginPage(ctk.CTkFrame):
                          border_color, background_corner_colors, overwrite_preferred_drawing_method, **kwargs)
         self.app = app
 
+        self.app.dispatcher.subscribe(Events.LOGIN_FAILED, self._on_login_failed)
+
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
         center_frame.pack(expand=True)
 
@@ -100,12 +102,16 @@ class LoginPage(ctk.CTkFrame):
             center_frame, placeholder_text="Enter username")
         self.username_input.pack(pady=10)
 
-        button = ctk.CTkButton(center_frame, text="Login", command=self.login)
-        button.pack()
+        self.login_button = ctk.CTkButton(center_frame, text="Login", command=self.login)
+        self.login_button.pack()
 
     def login(self):
         username = self.username_input.get()
+        self.login_button.configure(state="disabled")
         self.app.dispatcher.emit(Events.LOGIN_CLICKED, username)
+
+    def _on_login_failed(self):
+        self.login_button.configure(state="normal")
 
 
 class GamePage(ctk.CTkFrame):
@@ -134,6 +140,7 @@ class GamePage(ctk.CTkFrame):
 
         self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
         self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
+        self.app.dispatcher.subscribe(Events.SERVER_TIMEOUT, self._show_timeout_text)
 
         # Background Canvas for displaying the images
         self.canvas = tk.Canvas(self, highlightthickness=0, bg="blue")
@@ -169,6 +176,8 @@ class GamePage(ctk.CTkFrame):
         self.logout_button = ctk.CTkButton(self, text="Logout", bg_color="black", corner_radius=0, width=60,
                                            fg_color="red4", hover_color="red3", command=self._on_logout_pressed)
         self.logout_button.place(anchor="se", relx=1.0, rely=1.0)
+
+        self._show_timeout_text()
 
     def update_frame(self, game_state: ClientGameState, damage_numbers=None):
         """Updates the GamePage with the provided game state."""
@@ -290,3 +299,9 @@ class GamePage(ctk.CTkFrame):
         self._hide_defeated_screen()
         self.boss_defeated = False
         self.update_frame(game_state)
+
+    def _show_timeout_text(self, show: bool = True):
+        if show:
+            self.canvas.create_text(10, 75, text="Server disconnected, reconnecting...", font=("Arial", 12), fill="white", anchor="sw", tags="timeout_text")
+        else:
+            self.canvas.delete("timeout_text")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from client.events import UIEventDispatcher, Events
@@ -25,7 +26,6 @@ class LoginService:
         packet = Packet(login_data, tag=PacketTag.LOGIN)
         login_broadcast = BroadcastSocket(packet, self._handle_login_response, self._handle_login_timeout)
         login_broadcast.start()
-        login_broadcast.join()
 
     def _handle_login_response(self, packet: Packet, _address: tuple[str, int]):
         """Called when a login response is received. Updates the game state and starts a TCP connection with the responder."""
@@ -39,16 +39,21 @@ class LoginService:
     
     def _handle_login_timeout(self):
         print("Login failed. Server did not respond to login request.")
+        self._game_controller.dispatcher.emit(Events.LOGIN_FAILED)
 
 
 class ConnectionService(TCPClientConnection):
     """Connection service that composes a TCPClientConnection and processes incoming packets."""
+
+    SERVER_TIMEOUT = 10.0
 
     def __init__(self, address: tuple[str, int], username: str, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
         super().__init__(address)
         self.dispatcher = dispatcher
         self._client_game_state = client_game_state
         self._username: str = username
+        self.server_timeout_timer: Optional[threading.Timer] = None
+        self._restart_server_timer()
 
     def _handle_packet(self, packet: Packet):
         try:
@@ -58,6 +63,8 @@ class ConnectionService(TCPClientConnection):
                     self._client_game_state.update(game_state)
                     print(f"You are now logged in as {self._username}")
                     self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
+                    self.dispatcher.emit(Events.SERVER_TIMEOUT, False)
+                    self._restart_server_timer()
 
                 # handle the same tags as before
                 case PacketTag.CLIENT_PING:
@@ -85,6 +92,9 @@ class ConnectionService(TCPClientConnection):
 
                 case _:
                     print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+                    return
+
+            self._restart_server_timer()
 
         except Exception as e:
             print("Error handling packet:", e)
@@ -110,6 +120,20 @@ class ConnectionService(TCPClientConnection):
             print("Logout sent now.")
         except OSError as e:
             print("Could not send logout:", e)
+
+    def _restart_server_timer(self):
+        if self.server_timeout_timer:
+            self.server_timeout_timer.cancel()
+        self.server_timeout_timer = threading.Timer(self.SERVER_TIMEOUT, self._on_server_timeout_detected)
+        self.server_timeout_timer.start()
+
+    def _on_server_timeout_detected(self):
+        if self.is_alive():
+            Debug.log("Server inactivity detected. Trying to log in again.", "CLIENT")
+            self.dispatcher.emit(Events.SERVER_TIMEOUT, True)
+        else:
+            Debug.log("Login failed.")
+            self.dispatcher.emit(Events.LOGIN_FAILED)
 
 
 class GameController:
