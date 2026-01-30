@@ -5,6 +5,7 @@ from threading import Lock, Timer
 from typing import Optional, Tuple
 from uuid import UUID, uuid4
 
+from server.server_logic import UDPListener
 from server_logic import ConnectionManager, GameStateManager
 from shared.data import *
 from shared.packet import PacketTag, Packet
@@ -35,13 +36,18 @@ class ServerLoop:
         self.connection_manager = ConnectionManager(self, self.server_uuid)
         self.game_state_manager = GameStateManager()
 
+        self.udp_listener = UDPListener(self.connection_manager)
+        self.udp_listener.start()
+        self.udp_listen_addr = self.udp_listener.get_address()
+        print(f"udp listen port: {self.udp_listen_addr[1]}")
+
         self._is_stopped = False
         self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.out_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.tick_rate = 0.1  # ticks per second
 
         self.leader_uuid: str | None = None
-        self.leader_addr: Tuple[str, int] | None = self.connection_manager.listener_address
+        self.leader_addr: Tuple[str, int] | None = self.udp_listen_addr
         self.is_leader: bool = False
         self.election_in_progress: bool = False
 
@@ -302,6 +308,7 @@ class ServerLoop:
         # leader changed
         if old_leader_uuid is None or old_leader_uuid != leader_uuid:
             self._on_leader_changed()
+        print(f"acc leader {self.leader_addr[1]}")
         Debug.log(f"Accepting leader <{self.leader_uuid}> {'(myself)' if self.is_leader else ''}", "SERVER",
                   "BULLY")
 
@@ -352,9 +359,11 @@ class ServerLoop:
         """Returns the correct heartbeat packet depending on weather this server is the leader or not."""
         server_info = self.connection_manager.server_info
         if self.is_leader:
+            server_info.listening_port = self.udp_listen_addr[1]
             return Packet(server_info, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
 
         else:
+            server_info.listening_port = self.udp_listen_addr[1]
             return Packet(server_info, tag=PacketTag.SERVER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
 
     def _on_leader_changed(self):
@@ -366,6 +375,6 @@ class ServerLoop:
             # broadcast leader heartbeat
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL)
         else:
-            # tcp heartbeat to leader
+            # udp heartbeat to leader
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_addr[0], self.leader_addr[1])
         self._heartbeat.start()

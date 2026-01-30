@@ -45,8 +45,8 @@ class SocketUtils:
         packet = Packet.decode(length_bytes + json_bytes)
         return packet
 
-    @classmethod
-    def get_local_ip(cls):
+    @staticmethod
+    def _get_local_ip() -> str:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             # Doesn't need to be reachable
@@ -54,6 +54,8 @@ class SocketUtils:
             return s.getsockname()[0]
         finally:
             s.close()
+
+    local_ip = _get_local_ip()
 
 
     # TODO use this method everywhere where packets are being received. Also make Packet generic
@@ -176,18 +178,20 @@ class BroadcastListener(Thread):
         self._stop_event = Event()
         self.latest_uuids = deque(["" for _ in range(100)])
 
+        self.port_queue = mp.Queue()
+
     def stop(self):
         self._stop_event.set()
 
     def run(self):
-        local_ip = self.get_local_ip()
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # alle interfaces
         sock.bind(("", self.port))
         # Timeout, damit recvfrom nicht unendlich blockiert
         sock.settimeout(5.0)
+
+        self.port_queue.put(sock.getsockname()[1])
         try:
             while not self._stop_event.is_set():
                 try:
@@ -226,13 +230,9 @@ class BroadcastListener(Thread):
         finally:
             sock.close()
 
-    @staticmethod
-    def get_local_ip():
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Connect to a dummy address (8.8.8.8) to trigger the OS
-            # to pick the correct outgoing interface. No data is actually sent.
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+    def get_port(self) -> int:
+        """Returns the port the server is listening on. Blocks until the port is available."""
+        return self.port_queue.get()
 
 
 class _TCPConnection:
@@ -421,8 +421,8 @@ class Heartbeat(Thread):
                 self.target_ip = self.BROADCAST_IP
             # tcp socket
             else:
-                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.socket.connect((self.target_ip, self.port))
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                #self.socket.connect((self.target_ip, self.port))
         except Exception:
             self.stop()
 
@@ -435,11 +435,10 @@ class Heartbeat(Thread):
         while not self._stop_event.is_set():
             next_packet = self.packet_function()
             try:
-                if self._use_broadcast:
-                    for _ in range(self.broadcast_attempts):
-                        self.socket.sendto(next_packet.encode(), (self.target_ip, self.port))
-                else:
-                    self.socket.sendall(next_packet.encode())
+                print(f"sending hb to {(self.target_ip, self.port)}")
+                for _ in range(self.broadcast_attempts):
+                    self.socket.sendto(next_packet.encode(), (self.target_ip, self.port))
+
                 time.sleep(self.hb_interval)
             except Exception:
                 break
