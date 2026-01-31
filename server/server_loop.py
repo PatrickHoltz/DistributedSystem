@@ -1,6 +1,7 @@
 import multiprocessing as mp
 import threading
 import time
+from collections.abc import Callable
 from threading import Lock, Timer
 from typing import Optional
 from uuid import UUID, uuid4
@@ -24,6 +25,8 @@ class ServerLoop:
     BULLY_COORDINATOR_WAIT = 8.0
     TAKEOVER_COOLDOWN = 1.0
     _next_takeover_allowed = 0.0
+
+    SERVER_HEARTBEAT_TIMEOUT = 4.0
 
     DEBUG = True
 
@@ -70,6 +73,8 @@ class ServerLoop:
         while not self._is_stopped:
             now = time.monotonic()
 
+            self._filter_server_view()
+
             # reset damage numbers for next loop iteration
             self.game_state_manager.latest_damage_numbers = []
 
@@ -83,6 +88,17 @@ class ServerLoop:
 
     def stop(self):
         self._is_stopped = True
+
+    def _filter_server_view(self):
+        """Filters outdated servers from the server view"""
+        old_len = len(self.connection_manager.server_view)
+        now = time.monotonic()
+        filtered_view = {k: v for k, v in self.connection_manager.server_view.items() if v.last_seen > now - self.SERVER_HEARTBEAT_TIMEOUT}
+        self.connection_manager.server_view = filtered_view
+        if len(filtered_view) != old_len:
+            print(f"Server view size shrunk to {len(filtered_view)}")
+
+
 
     def multicast_packet(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""

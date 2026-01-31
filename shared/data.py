@@ -94,7 +94,13 @@ class ServerInfo:
     tcp_port: int
 
 @dataclass
+class ServerState:
+    server_info: ServerInfo
+    last_seen: float
+
+@dataclass
 class ClientInfo:
     username: str
     ip: str
     port: int
+

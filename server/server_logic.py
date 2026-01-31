@@ -109,14 +109,13 @@ class ConnectionManager:
 
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
-        self.server_view: dict[str, ServerInfo] = {
-            self.server_loop.server_uuid: self.server_info
-        }
+        self.server_view: dict[str, ServerState] = {}
 
     def _assign_client(self) -> ServerInfo:
         """Returns the server info of the server which is occupied least"""
-        least_used_server = min(self.server_view.values(), key=attrgetter('occupancy'))
-        return least_used_server
+        least_used_other_server = min(self.server_view.values(), key=attrgetter('server_info.occupancy'), default=ServerState(self.server_info, 0)).server_info
+
+        return min(least_used_other_server, self.server_info, key=attrgetter('occupancy'))
 
     def add_connection(self, username: str, conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
@@ -313,7 +312,8 @@ class UDPListener(_TCPConnection, Thread):
                 server_info = ServerInfo(**packet.content)
 
                 #Debug.log("Server heartbeat received.", "LEADER")
-                self._connection_manager.server_view[server_info.server_uuid] = server_info
+                server_state = ServerState(server_info, time.monotonic())
+                self._connection_manager.server_view[server_info.server_uuid] = server_state
 
     def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
