@@ -18,40 +18,28 @@ class MulticastPacket:
     content: str
 
     @staticmethod
-    def get_format_str(content_size: int) -> str:
-        return "!I16sI" + str(content_size) + "s"
-
-    @staticmethod
-    def get_packet_size(content_size: int) -> int:
-        # returns the remaining size of the package after reading in the first 4 bytes defining the content size
-        return 16 + 4 + content_size
+    def get_format_str() -> str:
+        return '!16si1024s' # TODO: make this not fixed
 
     def pack(self) -> bytes:
         uuid = self.sender_uuid.bytes
-        content = bytearray(self.content.encode('utf-8'))
-        content_size = len(content)
-
-        format = MulticastPacket.get_format_str(content_size)
-
-        return struct.pack(format, content_size, uuid, self.sequence_number, content)
+        chars = bytearray(self.content.encode('utf-8'))
+        return struct.pack(MulticastPacket.get_format_str(), uuid, self.sequence_number, chars)
 
     @staticmethod
     def unpack(data: bytes) -> MulticastPacket:
-        content_size = int.from_bytes(data[0:4], "big", False)
-        format = MulticastPacket.get_format_str(content_size)
-
-        (content_size, uuid_bytes, sequence_number, content_bytes) = struct.unpack(format, data)
-
-        uuid = UUID(bytes=uuid_bytes)
-        content = content_bytes.decode("utf-8")
+        tuple = struct.unpack(MulticastPacket.get_format_str(), data)
+        uuid = UUID(bytes=tuple[0])
+        sequence_number = tuple[1]
+        content = tuple[2].decode("utf-8")
         return MulticastPacket(uuid, sequence_number, content)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
-
+    
     msg_queue: list[MulticastPacket]
     lock: Lock
-
+    
     def __init__(self, group: str, port: int, ipc_port: int) -> None:
         super().__init__(daemon=True)
 
@@ -70,8 +58,9 @@ class MulticastReceiver(Thread):
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
 
         while True:
-            msg = self._receive_package()
-
+            data = self.socket.recv(10240) # TODO: make this not fixed
+            msg = MulticastPacket.unpack(data)
+            
             self.lock.acquire()
             self.msg_queue.append(msg)
             self.lock.release()
@@ -81,29 +70,13 @@ class MulticastReceiver(Thread):
 
     def get(self) -> MulticastPacket|None:
         msg = None
-
+        
         self.lock.acquire()
         if len(self.msg_queue) > 0:
             msg = self.msg_queue.pop()
         self.lock.release()
-
+        
         return msg
-
-    def _receive_package(self) -> MulticastPacket:
-        length_bytes = self._receive_exact(4)
-        content_size = int.from_bytes(length_bytes, "big", False)
-        package_size = MulticastPacket.get_packet_size(content_size)
-        package_bytes = self._receive_exact(package_size)
-        data = length_bytes + package_bytes
-
-        return MulticastPacket.unpack(data)
-
-    def _receive_exact(self, size) -> bytes:
-        data: bytes = []
-        while len(data) < size:
-            chunk = self.socket.recv(size - len(data))
-            data += chunk
-        return data
 
 class MulticastSender(Thread):
     """Creates a new thread for sending multicast packages"""
@@ -132,14 +105,15 @@ class MulticastSender(Thread):
                 self.lock.acquire()
                 msg = self.msg_queue.pop()
                 self.lock.release()
-
+            
                 bytes = msg.pack()
                 self.socket.sendto(bytes, (self.group, self.port))
-
+            
     def send(self, msg: MulticastPacket):
         self.lock.acquire()
         self.msg_queue.append(msg)
         self.lock.release()
+        
 
 class Multicast:
     """Class for sending and receiving reliably ordered (FIFO) multicasts"""
@@ -151,7 +125,7 @@ class Multicast:
     IPC_RECV_PORT = 6001
 
     uuid: UUID
-
+    
     _sender: MulticastSender
     _receiver: MulticastReceiver
     _receive_handler: Thread
@@ -163,14 +137,14 @@ class Multicast:
 
     def __init__(self, uuid) -> None:
         self.uuid = uuid;
-
+        
         self._sequence_number = 0
         self._received_tracker = {}
         self._hold_back_queue = []
 
         self._sender = MulticastSender(self.GROUP, self.PORT, self.IPC_SEND_PORT)
         self._receiver = MulticastReceiver(self.GROUP, self.PORT, self.IPC_RECV_PORT)
-
+        
         self._sender.start()
         self._receiver.start()
 
@@ -178,7 +152,7 @@ class Multicast:
         self._receive_handler.start()
 
     def cast_msg(self, msg: str):
-        self._reliable_multicast(msg)
+        self._basic_multicast(msg)
 
     def _receive_handler(self):
         while True:
@@ -203,30 +177,13 @@ class Multicast:
 
         # else ignore duplicate msg
 
-    #def _basic_multicast(self, content: str):
-    #    msg = MulticastPacket(self.uuid, self._sequence_number, content)
-    #
-    #    self._sequence_number += 1
-    #    self._sender.send(msg)
-
-    def _basic_deliver(self, msg: MulticastPacket):
-        if msg in self._received:
-            return
-        
-        self._received.append(msg)
-        
-        if msg.sender_uuid != self.uuid:
-            self._reliable_multicast(msg) # TODO: check if this needs to be basic_multicast
-
-        self._reliable_deliver(msg)
-
-    def _reliable_multicast(self, content: str): # TODO: make this handle concrete packets
-        msg = MulticastPacket(self.uuid, self._sequence_number, content) # TODO: add self._received_tracker
+    def _basic_multicast(self, content: str):
+        msg = MulticastPacket(self.uuid, self._sequence_number, content)
 
         self._sequence_number += 1
         self._sender.send(msg)
 
-    def _reliable_deliver(self, msg: MulticastPacket):
+    def _basic_deliver(self, msg: MulticastPacket):
         #if msg.sender_uuid != self.uuid:
             print("Deliver: "+ str(msg.sequence_number) + " > " + msg.content)
 
