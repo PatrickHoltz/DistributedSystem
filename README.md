@@ -44,3 +44,9 @@
   - [x] Display/Update boss health
   - [x] Display/Hide win screen
   - [x] Switch server (in case of reassignment)
+
+#### Code Improvements
+- [ ] Look over Thread creations (performance)
+- [ ] Unify sockets that have common attributes / methods
+- [ ] Switch Broadcast to Multicast (broadcast messages may not be sent to all processes)
+- [ ] Rethink using standard Bully (higher UUID joins -> triggers election) but current may be better
