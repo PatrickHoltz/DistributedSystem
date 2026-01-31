@@ -4,7 +4,7 @@ import time
 import random
 
 from uuid import UUID, uuid4
-from threading import Thread, Lock, Timer
+from threading import Lock, Timer
 
 from server_logic import ConnectionManager, GameStateManager
 from shared.data import *
@@ -160,16 +160,16 @@ class ServerLoop:
         self._stats_seq += 1
         stats = self.game_state_manager.get_player_stats()
         msg = GossipPlayerStats(server_uuid=self.server_uuid, seq=self._stats_seq, stats=stats)
-        pkt = Packet(msg, tag=PacketTag.GOSSIP_PLAYER_STATS, uuid=UUID(self.server_uuid).int)
-        self._fire_broadcast(pkt, tries=1, timeout_s=0.08)
+        pkt = Packet(msg, tag=PacketTag.GOSSIP_PLAYER_STATS, server_uuid=UUID(self.server_uuid).int)
+        BroadcastSocket(pkt, timeout_s=0.15, send_attempts=2).start()
 
     def _broadcast_boss_sync(self):
         if not self.is_leader:
             return
         boss = self.game_state_manager.get_boss()
         msg = GossipBossSync(boss_id=self.boss_id, leader_uuid=self.server_uuid, boss=boss)
-        pkt = Packet(msg, tag=PacketTag.GOSSIP_BOSS_SYNC, uuid=UUID(self.server_uuid).int)
-        self._fire_broadcast(pkt, tries=2, timeout_s=0.10)
+        pkt = Packet(msg, tag=PacketTag.GOSSIP_BOSS_SYNC, server_uuid=UUID(self.server_uuid).int)
+        BroadcastSocket(pkt, timeout_s=0.15, send_attempts=2).start()
 
     def _leader_apply_boss_progress(self):
         """Leader-only: if boss is dead, advance stage and announce a new boss_id"""
