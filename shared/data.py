@@ -8,7 +8,7 @@ class PlayerData:
     online: bool
 
 @dataclass
-class BossData:
+class MonsterData:
     name: str
     stage: int
     health: int
@@ -17,29 +17,29 @@ class BossData:
 @dataclass
 class GameStateData:
     players: dict[str, PlayerData]
-    boss: BossData
+    monster: MonsterData
 
     @classmethod
     def from_dict(cls, data: dict):
         players = {username: PlayerData(**pdata) for username, pdata in data['players'].items()}
-        boss_data = BossData(**data['boss'])
-        return cls(players=players, boss=boss_data)
+        monster_data = MonsterData(**data['monster'])
+        return cls(players=players, monster=monster_data)
 
 @dataclass
 class PlayerGameStateData:
     """Snapshot of the game state relevant to a specific player."""
-    boss: BossData
+    monster: MonsterData
     player: PlayerData
     player_count: int
     latest_damages: list[int]
 
     @classmethod
     def from_dict(cls, data: dict):
-        boss_data = BossData(**data['boss'])
+        monster_data = MonsterData(**data['monster'])
         player_data = PlayerData(**data['player'])
         player_count = data['player_count']
         latest_damages = data['latest_damages']
-        return cls(boss=boss_data, player=player_data, player_count=player_count, latest_damages=latest_damages)
+        return cls(monster=monster_data, player=player_data, player_count=player_count, latest_damages=latest_damages)
 
 @dataclass
 class LoginReplyData:

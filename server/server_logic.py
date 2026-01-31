@@ -10,34 +10,34 @@ class GameStateManager:
     base_damage = 10
 
     def __init__(self):
-        self._game_state = GameStateData(players={}, boss=self._create_boss(1))
+        self._game_state = GameStateData(players={}, monster=self._create_monster(1))
         self.latest_damage_numbers: list[int] = []
 
     @classmethod
-    def _create_boss(cls, stage: int) -> BossData:
+    def _create_monster(cls, stage: int) -> MonsterData:
         health = 100 + (stage - 1) * 20
-        return BossData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
+        return MonsterData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
 
     def apply_attack(self, username: str):
-        """Applies an attack from the given player to the current boss. Advances the boss stage if the boss is defeated.
-        Returns True if the boss is defeated afterward, False otherwise.
+        """Applies an attack from the given player to the current monster. Advances the monster stage if the monster is defeated.
+        Returns True if the monster is defeated afterward, False otherwise.
         """
         if username in self._game_state.players:
             damage = self._game_state.players[username].damage
-            self._game_state.boss.health -= damage
+            self._game_state.monster.health -= damage
             self.latest_damage_numbers.append(damage)
-            boss_defeated = self._game_state.boss.health <= 0
-            if boss_defeated:
-                print("Boss defeated. Advancing to next stage.")
-                self._game_state.boss.health = 0
-                self._advance_boss_stage()
-            return boss_defeated
-        return self._game_state.boss.health <= 0
+            monster_defeated = self._game_state.monster.health <= 0
+            if monster_defeated:
+                print("Monster defeated. Advancing to next stage.")
+                self._game_state.monster.health = 0
+                self._advance_monster_stage()
+            return monster_defeated
+        return self._game_state.monster.health <= 0
     
-    def _advance_boss_stage(self):
-        new_stage = self._game_state.boss.stage + 1
-        new_boss = self._create_boss(new_stage)
-        self._game_state.boss = new_boss
+    def _advance_monster_stage(self):
+        new_stage = self._game_state.monster.stage + 1
+        new_monster = self._create_monster(new_stage)
+        self._game_state.monster = new_monster
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online in all cases."""
@@ -52,14 +52,14 @@ class GameStateManager:
 
     def get_player_state(self, username: str) -> PlayerGameStateData:
         return PlayerGameStateData(
-            boss=self._game_state.boss,
+            monster=self._game_state.monster,
             player_count=self.get_online_player_count(),
             player=self._game_state.players[username],
             latest_damages=self.latest_damage_numbers
         )
 
-    def get_boss(self) -> BossData:
-        return self._game_state.boss
+    def get_monster(self) -> MonsterData:
+        return self._game_state.monster
     
     def get_online_player_count(self) -> int:
         online_players = [p for p in self._game_state.players.values() if p.online]
