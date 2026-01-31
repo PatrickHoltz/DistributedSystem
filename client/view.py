@@ -37,7 +37,7 @@ class PlayerApp:
         ctk.set_widget_scaling(1.0)
         ctk.set_window_scaling(1.0)
 
-        self.root.title("Kill the Boss")
+        self.root.title("Kill the monster")
         self.root.geometry("600x400")
         self.root.geometry(f"{600}x{400}")
         self.root.resizable(False, False)
@@ -95,7 +95,7 @@ class LoginPage(ctk.CTkFrame):
         center_frame.pack(expand=True)
 
         label = ctk.CTkLabel(
-            center_frame, text="Welcome to Kill the Boss. Please login.")
+            center_frame, text="Welcome to Kill the Monster. Please login.")
         label.pack()
 
         self.username_input = ctk.CTkEntry(
@@ -134,12 +134,12 @@ class GamePage(ctk.CTkFrame):
 
         self.root = master
         self.app = app
-        self.boss_defeated = False
-        self.is_animating_boss = False
+        self.monster_defeated = False
+        self.is_animating_monster = False
         self.active_damage_numbers: dict[str, int] = {}
 
         self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
-        self.app.dispatcher.subscribe(Events.NEW_BOSS, self._on_new_boss)
+        self.app.dispatcher.subscribe(Events.NEW_MONSTER, self._on_new_monster)
         self.app.dispatcher.subscribe(Events.SERVER_TIMEOUT, self._show_timeout_text)
 
         # Background Canvas for displaying the images
@@ -164,8 +164,8 @@ class GamePage(ctk.CTkFrame):
         self.players_label = ctk.CTkLabel(top_bar, text=f"Players: {1000}", font=("Lucida Sans", 16))
         self.players_label.pack(side="right", padx=10, pady=5)
 
-        self.boss_name_label = ctk.CTkLabel(top_bar, text="-", font=("Arial", 22, "bold"))
-        self.boss_name_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.monster_name_label = ctk.CTkLabel(top_bar, text="-", font=("Arial", 22, "bold"))
+        self.monster_name_label.place(relx=0.5, rely=0.5, anchor="center")
 
         # Attack button
         self.attack_button = ctk.CTkButton(self, text="Attack!", bg_color="black",
@@ -181,28 +181,28 @@ class GamePage(ctk.CTkFrame):
 
     def update_frame(self, game_state: ClientGameState, damage_numbers=None):
         """Updates the GamePage with the provided game state."""
-        if self.boss_defeated:
+        if self.monster_defeated:
             return
 
         self.level_label.configure(text=f"Level: {game_state.player.level}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
-        self.boss_name_label.configure(text=game_state.boss.name)
-        self._update_health_bar(game_state.boss.health, game_state.boss.max_health)
+        self.monster_name_label.configure(text=game_state.monster.name)
+        self._update_health_bar(game_state.monster.health, game_state.monster.max_health)
 
         if damage_numbers:
             for n in damage_numbers:
                 self._render_damage_number(n)
 
-        if not self.is_animating_boss:
-            self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.boss.is_dead() else 0])
+        if not self.is_animating_monster:
+            self.canvas.itemconfig(self.character, image=self.character_frames[2 if game_state.monster.is_dead() else 0])
 
-        if game_state.boss.is_dead():
+        if game_state.monster.is_dead():
             self._display_defeated_screen()
-            self.boss_defeated = True
+            self.monster_defeated = True
 
 
     def _update_health_bar(self, health=100, max_health=100):
-        """Destroys the old health bar and creates a new one based on the boss's current health."""
+        """Destroys the old health bar and creates a new one based on the monster's current health."""
         self.canvas.delete("healthbar")
         text_id = self.canvas.create_text(450, 150, text=f"Health: {health}", font=("Arial", 22, "bold"), fill="white",
                                           width=200, tags="healthbar")
@@ -255,14 +255,14 @@ class GamePage(ctk.CTkFrame):
 
     def _on_attack_input(self):
         """Event callback for when the player inputs damage (presses space or clicks attack button)."""
-        if self.boss_defeated:
+        if self.monster_defeated:
             return
         print("Attack input received.")
         self.app.dispatcher.emit(Events.ATTACK_CLICKED)
 
         # Animate character hit
         self.canvas.itemconfig(self.character, image=self.character_frames[1])
-        self.is_animating_boss = True
+        self.is_animating_monster = True
         self.after(100, self._attack_after)
 
     def _on_logout_pressed(self):
@@ -272,15 +272,15 @@ class GamePage(ctk.CTkFrame):
         self.app.dispatcher.emit(Events.LOGOUT_CLICKED)
 
     def _attack_after(self):
-        self.is_animating_boss = False
-        self.canvas.itemconfig(self.character, image=self.character_frames[2 if self.boss_defeated else 0])
+        self.is_animating_monster = False
+        self.canvas.itemconfig(self.character, image=self.character_frames[2 if self.monster_defeated else 0])
 
     def _display_defeated_screen(self):
-        self.canvas.create_text(304, 204, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="black",
+        self.canvas.create_text(304, 204, text="Monster Defeated!", font=("Arial", 50, "bold"), fill="black",
                                 tags="defeat_text")
-        self.canvas.create_text(300, 200, text="Boss Defeated!", font=("Arial", 50, "bold"), fill="white",
+        self.canvas.create_text(300, 200, text="Monster Defeated!", font=("Arial", 50, "bold"), fill="white",
                                 tags="defeat_text")
-        self.canvas.create_text(300, 260, text="Get ready for the next boss...", font=("Arial", 20, "bold"),
+        self.canvas.create_text(300, 260, text="Get ready for the next monster...", font=("Arial", 20, "bold"),
                                 fill="white", tags="defeat_text")
         self.canvas.delete("healthbar")
         self.attack_button.configure(state=tk.DISABLED)
@@ -290,14 +290,14 @@ class GamePage(ctk.CTkFrame):
         self.canvas.delete("defeat_text")
         self.attack_button.configure(state=tk.NORMAL)
 
-    def _on_new_boss(self, game_state: ClientGameState):
-        self.boss_defeated = True
+    def _on_new_monster(self, game_state: ClientGameState):
+        self.monster_defeated = True
         self._display_defeated_screen()
-        self.after(3000, lambda: self._init_new_boss(game_state))
+        self.after(3000, lambda: self._init_new_monster(game_state))
 
-    def _init_new_boss(self, game_state: ClientGameState):
+    def _init_new_monster(self, game_state: ClientGameState):
         self._hide_defeated_screen()
-        self.boss_defeated = False
+        self.monster_defeated = False
         self.update_frame(game_state)
 
     def _show_timeout_text(self, show: bool = True):

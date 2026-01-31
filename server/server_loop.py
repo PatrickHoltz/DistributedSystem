@@ -118,10 +118,10 @@ class ServerLoop:
                     self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
-                    boss_defeated = self.game_state_manager.apply_attack(username)
-                    if boss_defeated:
-                        new_boss = self.game_state_manager.get_boss()
-                        self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
+                    monster_defeated = self.game_state_manager.apply_attack(username)
+                    if monster_defeated:
+                        new_monster = self.game_state_manager.get_monster()
+                        self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
