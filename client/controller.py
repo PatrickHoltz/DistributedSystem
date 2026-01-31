@@ -17,6 +17,7 @@ class LoginService:
     def __init__(self, game_controller: 'GameController'):
         self._game_controller = game_controller
         self._game_controller.dispatcher.subscribe(Events.LOGIN_CLICKED, self.login)
+        self._game_controller.dispatcher.subscribe(Events.SERVER_TIMEOUT, self.login)
 
     def login(self, username: str):
         """Sends a login broadcast and waits for a response to update the game state."""
@@ -63,7 +64,6 @@ class ConnectionService(TCPClientConnection):
                     self._client_game_state.update(game_state)
                     print(f"You are now logged in as {self._username}")
                     self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
-                    self.dispatcher.emit(Events.SERVER_TIMEOUT, False)
                     self._restart_server_timer()
 
                 # handle the same tags as before
@@ -108,6 +108,7 @@ class ConnectionService(TCPClientConnection):
         logout_data = LoginData(self._username)
         packet = Packet(logout_data, tag=PacketTag.LOGOUT)
         self.send(packet)
+        self.server_timeout_timer.cancel()
         print("You are logged out now.")
 
     def send_logout_now(self):
@@ -130,7 +131,7 @@ class ConnectionService(TCPClientConnection):
     def _on_server_timeout_detected(self):
         if self.is_alive():
             Debug.log("Server inactivity detected. Trying to log in again.", "CLIENT")
-            self.dispatcher.emit(Events.SERVER_TIMEOUT, True)
+            self.dispatcher.emit(Events.SERVER_TIMEOUT, self._username)
         else:
             Debug.log("Login failed.")
             self.dispatcher.emit(Events.LOGIN_FAILED)
