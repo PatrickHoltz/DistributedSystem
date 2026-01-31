@@ -35,8 +35,10 @@ class UIEventDispatcher:
 class Events(StrEnum):
     UPDATE_GAME_STATE = "update_game_state"
     LOGGED_IN = "logged_in"
+    LOGIN_FAILED = "login_failed"
     LOGGED_OUT = "logged_out"
     LOGIN_CLICKED = "log_in_clicked"
     LOGOUT_CLICKED = "logout_clicked"
     ATTACK_CLICKED = "attack_clicked"
     NEW_MONSTER = "new_monster"
+    SERVER_TIMEOUT = "server_timeout"

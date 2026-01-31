@@ -1,8 +1,21 @@
-import multiprocessing as mp
-import time
+from __future__ import annotations
 
+import multiprocessing as mp
+import socket
+import time
+from operator import attrgetter
+from typing import TYPE_CHECKING
+from typing import override
+from uuid import UUID
+
+from server.server_sockets import TCPListener, UDPListener
 from shared.data import *
-from shared.sockets import Packet, PacketTag, BroadcastListener, TCPServerConnection
+from shared.packet import PacketTag, Packet
+from shared.sockets import BroadcastListener, TCPServerConnection, SocketUtils
+from shared.utils import Debug
+
+if TYPE_CHECKING:
+    from server_loop import ServerLoop   # only imported for type checkers
 
 
 class GameStateManager:
@@ -33,7 +46,7 @@ class GameStateManager:
                 self._advance_monster_stage()
             return monster_defeated
         return self._game_state.monster.health <= 0
-    
+
     def _advance_monster_stage(self):
         new_stage = self._game_state.monster.stage + 1
         new_monster = self._create_monster(new_stage)
@@ -42,10 +55,11 @@ class GameStateManager:
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online in all cases."""
         if username not in self._game_state.players:
-            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1, online=True)
+            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1,
+                                                            online=True)
         else:
             self._game_state.players[username].online = True
-    
+
     def logout_player(self, username: str):
         if username in self._game_state.players:
             self._game_state.players[username].online = False
@@ -60,7 +74,6 @@ class GameStateManager:
 
     def get_monster(self) -> MonsterData:
         return self._game_state.monster
-    
     def get_online_player_count(self) -> int:
         online_players = [p for p in self._game_state.players.values() if p.online]
         return len(online_players)
@@ -71,27 +84,57 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: 'ServerLoop', server_uuid: int = -1):
+    def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
-        self.login_listener = BroadcastListener(
-            on_message=self.handle_login,
-            server_uuid=server_uuid)
-        self.login_listener.start()
+        self.server_loop: ServerLoop = server_loop
 
-        self.server_loop = server_loop
+        # handles login requests to the leader
+        self.broadcast_listener = BroadcastListener(
+            on_message=self.handle_broadcast,
+            server_uuid=UUID(server_uuid).int)
+        self.broadcast_listener.start()
+
+        # handles regular login requests to the assigned server
+        self.client_listener = TCPListener(self)
+        self.client_listener.start()
+
+        # handles incoming udp packets
+        self.udp_listener = UDPListener(self)
+        self.udp_listener.start()
+
+        # wait until the listeners obtained the listener addresses
+        self.udp_listen_port = self.udp_listener.get_port()
+        self.tcp_listener_port = self.client_listener.get_port()
+
+        self.server_info = ServerInfo(server_uuid, 0, SocketUtils.local_ip, self.udp_listen_port, self.tcp_listener_port)
+        Debug.log(f"IP: {self.server_info.ip}, UDP port: {self.server_info.udp_port}, TCP port: {self.server_info.tcp_port}")
+
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
-    def _add_connection(self, username: str, address: tuple[str, int]) -> int:
+        self.server_view: dict[str, ServerState] = {}
+
+    def _assign_client(self) -> ServerInfo:
+        """Returns the server info of the server which is occupied least"""
+        least_used_other_server = min(self.server_view.values(), key=attrgetter('server_info.occupancy'), default=ServerState(self.server_info, 0)).server_info
+
+        return min(least_used_other_server, self.server_info, key=attrgetter('occupancy'))
+
+    def add_connection(self, username: str, conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
         Returns the port number the client communicator is listening on.
         """
 
         self.server_loop.game_state_manager.login_player(username)
 
-        communicator = ClientCommunicator(("", 0), username, self.server_loop.in_queue)
+        communicator = ClientCommunicator(conn_socket, username, self.server_loop.in_queue)
         communicator.start()
+
+        # send login confirm
+        player_state = self.server_loop.game_state_manager.get_player_state(username)
+        login_confirm = Packet(player_state, tag=PacketTag.LOGIN_CONFIRM)
+        communicator.send(login_confirm)
 
         self.active_connections[username] = communicator
         self.last_seen[username] = time.monotonic()
@@ -99,17 +142,21 @@ class ConnectionManager:
         # Wait until the communicator is ready and retrieve its port
         server_port = communicator.get_port()
 
-        print("Client connection established for", username, "on port", server_port)
+        self.server_info.occupancy += 1
+
+        Debug.log(f"Client connection established for {username}.", "SERVER")
         return server_port
 
     def remove_connection(self, username: str):
         """Closes an active connection."""
 
         if username in self.active_connections:
-            self.active_connections[username].terminate()
+            self.active_connections[username].stop()
             del self.active_connections[username]
         self.last_seen.pop(username, None)
         self.server_loop.game_state_manager.logout_player(username)
+
+        self.server_info.occupancy += 1
 
     def mark_seen(self, username: str):
         self.last_seen[username] = time.monotonic()
@@ -133,26 +180,27 @@ class ConnectionManager:
             print(f"Heartbeat timeout: {username}")
             self.remove_connection(username)
 
-    def handle_login(self, packet: Packet, address: tuple[str, int]):
+    def handle_broadcast(self, packet: Packet, _address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
 
         if packet.tag == PacketTag.LOGIN:
+            # Non leaders ignore login messages
+            if not self.server_loop.is_leader:
+                return None
+
             try:
                 login_data = LoginData(**packet.content)
-                print(f"Login request received by {login_data.username}")
+                Debug.log(f"Login request received by {login_data.username}", "LEADER")
 
-                server_port = self._add_connection(login_data.username, address)
-
-
-                game_state_update = self.server_loop.game_state_manager.get_player_state(login_data.username)
-                login_reply = LoginReplyData(server_port, game_state_update)
-
+                server_info = self._assign_client()
+                login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
                 response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
 
                 return response
             except TypeError as e:
                 print("Invalid login data received.", e)
         return None
+
 
 class ClientCommunicator(TCPServerConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
@@ -166,11 +214,12 @@ class ClientCommunicator(TCPServerConnection):
         PacketTag.CLIENT_PING: StringMessage,
     }
 
-    def __init__(self, address: tuple[str, int], username: str, in_queue: mp.Queue):
-        super().__init__(in_queue)
+    def __init__(self, conn_socket: socket.socket, username: str, in_queue: mp.Queue):
+        super().__init__(conn_socket, in_queue)
 
         self._username = username
 
+    @override
     def _handle_packet(self, packet: Packet):
         """Checks packet validity and provides the server loop with it."""
 
@@ -178,17 +227,19 @@ class ClientCommunicator(TCPServerConnection):
 
         # Abort if the packet tag is unknown
         if not data_class:
-            print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+            Debug.log(f"Unknown packet tag {packet.tag} received. Aborting packet.", "SERVER")
             return
 
-        typed_packet = self.get_typed_packet(packet, data_class)
+        typed_packet = SocketUtils.get_typed_packet(packet, data_class)
 
         # Abort if the packet content could not be transformed into the appropriate data class
         if not typed_packet:
-            print(f"Corrupt packet received. Aborting packet.")
+            Debug.log(f"Corrupt packet received. Aborting packet.", "SERVER")
             return
 
-        print(f"Packet '{typed_packet.tag}' successfully received.")
+        Debug.log(f"Packet '{typed_packet.tag}' successfully received.", "SERVER")
         # Put the received, typed packet onto the shared in_queue so the
         # main ServerLoop process can consume it.
         self._recv_queue.put((self._username, typed_packet))
+
+

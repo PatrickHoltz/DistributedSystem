@@ -5,10 +5,11 @@ import random
 import tkinter as tk
 import uuid
 from ctypes import windll
-from typing import cast
+from typing import cast, Optional
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
+from customtkinter import CTkFrame
 
 from client.events import UIEventDispatcher, Events
 from model import ClientGameState
@@ -26,6 +27,7 @@ class PlayerApp:
         self.frames: dict[type, ctk.CTkFrame] = {}
         self.root = root
         self.dispatcher = dispatcher
+        self.current_frame: Optional[CTkFrame] = None
 
         self._setup()
 
@@ -76,7 +78,8 @@ class PlayerApp:
         self.current_frame = new_frame
 
     def on_logged_in(self, game_state: ClientGameState):
-        self.show_frame(GamePage)
+        if isinstance(self.current_frame,LoginPage):
+            self.show_frame(GamePage)
         game_page: GamePage = cast(GamePage, self.frames[GamePage])
         game_page.update_frame(game_state)
 
@@ -89,6 +92,8 @@ class LoginPage(ctk.CTkFrame):
                          border_color, background_corner_colors, overwrite_preferred_drawing_method, **kwargs)
         self.app = app
 
+        self.app.dispatcher.subscribe(Events.LOGIN_FAILED, self._on_login_failed)
+
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
         center_frame.pack(expand=True)
 
@@ -100,12 +105,18 @@ class LoginPage(ctk.CTkFrame):
             center_frame, placeholder_text="Enter username")
         self.username_input.pack(pady=10)
 
-        button = ctk.CTkButton(center_frame, text="Login", command=self.login)
-        button.pack()
+        self.login_button = ctk.CTkButton(center_frame, text="Login", command=self.login)
+        self.login_button.pack()
 
     def login(self):
         username = self.username_input.get()
+        self.login_button.configure(state="disabled")
         self.app.dispatcher.emit(Events.LOGIN_CLICKED, username)
+
+    def _on_login_failed(self):
+        if not isinstance(self.app.current_frame, LoginPage):
+            self.app.show_frame(LoginPage)
+        self.login_button.configure(state="normal")
 
 
 class GamePage(ctk.CTkFrame):
@@ -134,6 +145,7 @@ class GamePage(ctk.CTkFrame):
 
         self.app.dispatcher.subscribe(Events.UPDATE_GAME_STATE, self.update_frame)
         self.app.dispatcher.subscribe(Events.NEW_MONSTER, self._on_new_monster)
+        self.app.dispatcher.subscribe(Events.SERVER_TIMEOUT, lambda u: self._toggle_timeout_text(True))
 
         # Background Canvas for displaying the images
         self.canvas = tk.Canvas(self, highlightthickness=0, bg="blue")
@@ -170,6 +182,7 @@ class GamePage(ctk.CTkFrame):
                                            fg_color="red4", hover_color="red3", command=self._on_logout_pressed)
         self.logout_button.place(anchor="se", relx=1.0, rely=1.0)
 
+
     def update_frame(self, game_state: ClientGameState, damage_numbers=None):
         """Updates the GamePage with the provided game state."""
         if self.monster_defeated:
@@ -179,6 +192,7 @@ class GamePage(ctk.CTkFrame):
         self.players_label.configure(text=f"Players: {game_state.player_count}")
         self.monster_name_label.configure(text=game_state.monster.name)
         self._update_health_bar(game_state.monster.health, game_state.monster.max_health)
+        self._toggle_timeout_text(False)
 
         if damage_numbers:
             for n in damage_numbers:
@@ -290,3 +304,9 @@ class GamePage(ctk.CTkFrame):
         self._hide_defeated_screen()
         self.monster_defeated = False
         self.update_frame(game_state)
+
+    def _toggle_timeout_text(self, show: bool = True):
+        if show:
+            self.canvas.create_text(10, 75, text="Server disconnected, reconnecting...", font=("Arial", 12), fill="white", anchor="sw", tags="timeout_text")
+        else:
+            self.canvas.delete("timeout_text")
