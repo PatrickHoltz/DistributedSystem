@@ -148,7 +148,7 @@ class ServerLoop:
                     self.game_state_manager.set_boss(new_boss)
 
                     if boss_changed:
-                        # no damage totals to reset
+                        self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
                         pass
                 return None
 
