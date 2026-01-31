@@ -4,6 +4,7 @@
         "INADDR",
         "IPPROTO",
         "multicasting",
+        "multicasts",
         "REUSEADDR"
     ]
 }

@@ -3,10 +3,9 @@ import socket
 import struct
 
 from dataclasses import dataclass
-from uuid import UUID
+from logging import warning
 from threading import Thread, Lock
-
-from shared.sockets import Packet
+from uuid import UUID
 
 @dataclass
 class MulticastPacket:
@@ -17,30 +16,38 @@ class MulticastPacket:
     # contains the actually send msg
     content: str
 
+    FIX_SIZE: int = 4096
+
     @staticmethod
     def get_format_str() -> str:
-        return '!16si1024s' # TODO: make this not fixed
+        content_size = MulticastPacket.FIX_SIZE - 16 - 4
+        return '!16si' + str(content_size) + 's'
 
     def pack(self) -> bytes:
         uuid = self.sender_uuid.bytes
         chars = bytearray(self.content.encode('utf-8'))
-        return struct.pack(MulticastPacket.get_format_str(), uuid, self.sequence_number, chars)
+        data = struct.pack(MulticastPacket.get_format_str(), uuid, self.sequence_number, chars)
+
+        if len(data) > MulticastPacket.FIX_SIZE:
+            warning("MulticastPacket exceeds the set fixed size of " + str(MulticastPacket.FIX_SIZE) + " (actual size: " + str(len(data)) + ")")
+
+        return data
 
     @staticmethod
-    def unpack(data: bytes) -> MulticastPacket:
-        tuple = struct.unpack(MulticastPacket.get_format_str(), data)
-        uuid = UUID(bytes=tuple[0])
-        sequence_number = tuple[1]
-        content = tuple[2].decode("utf-8")
+    def unpack(data: bytes) -> 'MulticastPacket':
+        uuid_bytes, sequence_number, content_bytes= struct.unpack(MulticastPacket.get_format_str(), data)
+        uuid = UUID(bytes=uuid_bytes)
+        content = content_bytes.decode("utf-8")
+
         return MulticastPacket(uuid, sequence_number, content)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
-    
+
     msg_queue: list[MulticastPacket]
     lock: Lock
-    
-    def __init__(self, group: str, port: int, ipc_port: int) -> None:
+
+    def __init__(self, group: str, port: int) -> None:
         super().__init__(daemon=True)
 
         self.msg_queue = []
@@ -58,24 +65,22 @@ class MulticastReceiver(Thread):
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
 
         while True:
-            data = self.socket.recv(10240) # TODO: make this not fixed
+            data = self.socket.recv(MulticastPacket.FIX_SIZE)
             msg = MulticastPacket.unpack(data)
-            
-            self.lock.acquire()
-            self.msg_queue.append(msg)
-            self.lock.release()
+
+            with self.lock:
+                self.msg_queue.append(msg)
 
     def has_msgs(self) -> bool:
         return len(self.msg_queue) > 0
 
     def get(self) -> MulticastPacket|None:
         msg = None
-        
-        self.lock.acquire()
-        if len(self.msg_queue) > 0:
-            msg = self.msg_queue.pop()
-        self.lock.release()
-        
+
+        with self.lock:
+            if len(self.msg_queue) > 0:
+                msg = self.msg_queue.pop()
+
         return msg
 
 class MulticastSender(Thread):
@@ -87,7 +92,7 @@ class MulticastSender(Thread):
     msg_queue: list[MulticastPacket]
     lock: Lock
 
-    def __init__(self, group: str, port: int, ipc_port: int) -> None:
+    def __init__(self, group: str, port: int) -> None:
         super().__init__(daemon=True)
 
         self.msg_queue = []
@@ -102,18 +107,15 @@ class MulticastSender(Thread):
     def run(self) -> None:
         while True:
             if len(self.msg_queue) > 0:
-                self.lock.acquire()
-                msg = self.msg_queue.pop()
-                self.lock.release()
-            
-                bytes = msg.pack()
-                self.socket.sendto(bytes, (self.group, self.port))
-            
+                with self.lock:
+                    msg = self.msg_queue.pop()
+
+                msg_bytes = msg.pack()
+                self.socket.sendto(msg_bytes, (self.group, self.port))
+
     def send(self, msg: MulticastPacket):
-        self.lock.acquire()
-        self.msg_queue.append(msg)
-        self.lock.release()
-        
+        with self.lock:
+            self.msg_queue.append(msg)
 
 class Multicast:
     """Class for sending and receiving reliably ordered (FIFO) multicasts"""
@@ -121,50 +123,50 @@ class Multicast:
     GROUP = '224.0.0.1'
     PORT = 5007
 
-    IPC_SEND_PORT = 6000
-    IPC_RECV_PORT = 6001
-
     uuid: UUID
-    
+
     _sender: MulticastSender
     _receiver: MulticastReceiver
     _receive_handler: Thread
 
     _sequence_number: int
     _received_tracker: dict[UUID, int]
-    
+
     _hold_back_queue: list[MulticastPacket]
 
     def __init__(self, uuid) -> None:
-        self.uuid = uuid;
-        
+        self.uuid = uuid
+
         self._sequence_number = 0
         self._received_tracker = {}
         self._hold_back_queue = []
 
-        self._sender = MulticastSender(self.GROUP, self.PORT, self.IPC_SEND_PORT)
-        self._receiver = MulticastReceiver(self.GROUP, self.PORT, self.IPC_RECV_PORT)
-        
+        self._sender = MulticastSender(self.GROUP, self.PORT)
+        self._receiver = MulticastReceiver(self.GROUP, self.PORT)
+
         self._sender.start()
         self._receiver.start()
 
-        self._receive_handler = Thread(target=self._receive_handler, args=())
+        self._receive_handler = Thread(target=self._receive_loop, args=())
         self._receive_handler.start()
 
     def cast_msg(self, msg: str):
         self._basic_multicast(msg)
 
-    def _receive_handler(self):
+    def _receive_loop(self):
         while True:
             if self._receiver.has_msgs():
                 msg = self._receiver.get()
+                if msg is None:
+                    continue
+
                 print("RECV: " + str(msg.sequence_number))
                 self._on_receive(msg)
 
     # basic multicast
     def _on_receive(self, msg: MulticastPacket):
         tracker = self._received_tracker.get(msg.sender_uuid)
-        if msg.sequence_number == tracker or tracker == None:
+        if msg.sequence_number == tracker or tracker is None:
             self._received_tracker[msg.sender_uuid] = msg.sequence_number + 1
 
             self._basic_deliver(msg)
@@ -189,15 +191,15 @@ class Multicast:
 
     def _clear_hold_back_queue(self, sender_uuid: UUID):
         tracker = self._received_tracker.get(sender_uuid)
-        next = None
+        next_msg = None
         for msg in self._hold_back_queue:
             if msg.sender_uuid != sender_uuid:
                 continue
 
             if msg.sequence_number == tracker:
-                next = msg
+                next_msg = msg
                 break
 
-        if next != None:
-            self._hold_back_queue.remove(next)
-            self._on_receive(next)
+        if next_msg is not None:
+            self._hold_back_queue.remove(next_msg)
+            self._on_receive(next_msg)
