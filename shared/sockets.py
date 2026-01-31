@@ -5,12 +5,10 @@ import multiprocessing as mp
 import queue
 import socket
 import struct
-import time
 from collections import deque
 from concurrent.futures import Future
 from threading import Thread, Event
-from typing import Optional, Callable, TypeVar, Type, final
-from typing import override
+from typing import Optional, Callable, TypeVar, Type
 
 from shared.packet import Packet
 
@@ -391,57 +389,3 @@ class TCPServerConnection(_TCPConnection, Thread):
 
         self.socket.close()
 
-class Heartbeat(Thread):
-    """
-    Process to continuously send heartbeat packets in a given interval.
-    If a target_ip is specified, the heartbeat is only sent to this address. Otherwise, it is broadcasted.
-    """
-
-    BROADCAST_IP = "255.255.255.255"
-
-    def __init__(self, packet_function: Callable[[], Packet], interval: float, target_ip: str = None, port: int = 10002, broadcast_attempts: int = 1):
-        super().__init__(name="Heartbeat")
-        self.packet_function = packet_function
-        self.socket: Optional[socket] = None
-        self.hb_interval = interval
-        self.target_ip = target_ip
-        self.port = port
-        self.broadcast_attempts = broadcast_attempts
-
-        self._stop_event = mp.Event()
-        self._use_broadcast = target_ip is None
-        self._next_hb = time.monotonic() + self.hb_interval
-
-    def _create_socket(self):
-        # udp broadcast socket
-        try:
-            if self._use_broadcast:
-                self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                self.target_ip = self.BROADCAST_IP
-            # tcp socket
-            else:
-                self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                #self.socket.connect((self.target_ip, self.port))
-        except Exception:
-            self.stop()
-
-    @override
-    def run(self):
-        self._create_socket()
-
-        while not self._stop_event.is_set():
-            next_packet = self.packet_function()
-            try:
-                #print(f"sending hb to {(self.target_ip, self.port)}")
-                for _ in range(self.broadcast_attempts):
-                    self.socket.sendto(next_packet.encode(), (self.target_ip, self.port))
-
-                time.sleep(self.hb_interval)
-            except Exception:
-                break
-
-        self.socket.close()
-
-    def stop(self):
-        self._stop_event.set()

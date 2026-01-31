@@ -9,7 +9,8 @@ from uuid import UUID, uuid4
 from server_logic import ConnectionManager, GameStateManager
 from shared.data import *
 from shared.packet import PacketTag, Packet
-from shared.sockets import BroadcastSocket, BroadcastListener, Heartbeat
+from shared.sockets import BroadcastSocket, BroadcastListener
+from server.server_sockets import Heartbeat
 from shared.utils import Debug
 
 

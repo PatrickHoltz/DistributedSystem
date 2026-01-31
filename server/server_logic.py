@@ -1,17 +1,21 @@
+from __future__ import annotations
+
 import multiprocessing as mp
 import socket
 import time
 from operator import attrgetter
-from threading import Thread
+from typing import TYPE_CHECKING
 from typing import override
 from uuid import UUID
-import json
 
+from server.server_sockets import TCPListener, UDPListener
 from shared.data import *
 from shared.packet import PacketTag, Packet
-from shared.sockets import BroadcastListener, TCPServerConnection, _TCPConnection, \
-    SocketUtils
+from shared.sockets import BroadcastListener, TCPServerConnection, SocketUtils
 from shared.utils import Debug
+
+if TYPE_CHECKING:
+    from server_loop import ServerLoop   # only imported for type checkers
 
 
 class GameStateManager:
@@ -80,11 +84,11 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    def __init__(self, server_loop: 'ServerLoop', server_uuid: str):
+    def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
 
-        self.server_loop: 'ServerLoop' = server_loop
+        self.server_loop: ServerLoop = server_loop
 
         # handles login requests to the leader
         self.broadcast_listener = BroadcastListener(
@@ -239,82 +243,3 @@ class ClientCommunicator(TCPServerConnection):
         self._recv_queue.put((self._username, typed_packet))
 
 
-class TCPListener(_TCPConnection, Thread):
-    """A socket which accepts incoming tcp connections if they deliver a login packet with them."""
-
-    def __init__(self, connection_manager: ConnectionManager):
-        super().__init__(mp.Queue())
-
-        # Queue to communicate the actual port back to the parent process
-        self._connection_manager = connection_manager
-        self.port_queue = mp.Queue()
-
-    def run(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.bind(("0.0.0.0", 0))
-
-        # set a high backlog so that no login request gets lost
-        self.socket.listen(50)
-
-        self.port_queue.put(self.socket.getsockname()[1])
-
-        while True:
-            client_sock, client_addr = self.socket.accept()
-
-            packet = SocketUtils.recv_packet(client_sock)
-
-            if packet.tag == PacketTag.LOGIN:
-                login_data = LoginData(**packet.content)
-                self._connection_manager.add_connection(login_data.username, client_sock)
-
-
-    def get_port(self) -> int:
-        """Returns the port the server is listening on. Blocks until the port is available."""
-        return self.port_queue.get()
-
-
-class UDPListener(_TCPConnection, Thread):
-    """A socket which accepts udp packets."""
-
-    def __init__(self, connection_manager: ConnectionManager):
-        super().__init__(mp.Queue())
-        self._connection_manager = connection_manager
-
-        # Queue to communicate the actual port back to the parent process
-        self.port_queue = mp.Queue()
-        self.buffer_size = 65507
-
-    def run(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(("0.0.0.0", 0))
-
-        self.port_queue.put(self.socket.getsockname()[1])
-
-        while True:
-            try:
-                data, addr = self.socket.recvfrom(self.buffer_size)
-            except socket.timeout:
-                # timeout
-                continue
-            except OSError:
-                # socket was maybe closed from outside
-                break
-
-            try:
-                # print("Broadcast message received from ", addr)
-                packet = Packet.decode(data)
-            except json.JSONDecodeError:
-                # ungültiges JSON ignorieren
-                continue
-
-            # Also read server heartbeats
-            if packet.tag == PacketTag.SERVER_HEARTBEAT and self._connection_manager.server_loop.is_leader:
-                server_info = ServerInfo(**packet.content)
-
-                #Debug.log("Server heartbeat received.", "LEADER")
-                server_state = ServerState(server_info, time.monotonic())
-                self._connection_manager.server_view[server_info.server_uuid] = server_state
-
-    def get_port(self) -> int:
-        """Returns the port the server is listening on. Blocks until the port is available."""
-        return self.port_queue.get()
