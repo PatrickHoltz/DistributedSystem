@@ -152,6 +152,17 @@ class ServerLoop:
                         pass
                 return None
 
+            case PacketTag.ATTACK:
+                if not self.is_leader:
+                    return None
+
+                damage = packet.content.get("damage")
+                if damage and isinstance(damage, (int, float)) and damage > 0:
+                    with self._gossip_lock:
+                        boss = self.game_state_manager.get_boss()
+                        self.game_state_manager.set_boss_health(boss.health - int(damage))
+                return None
+
             case _:
                 return None
 
@@ -219,10 +230,15 @@ class ServerLoop:
 
                 case PacketTag.ATTACK:
                     damage = self.game_state_manager.apply_attack(username)
-                    if self.is_leader and damage > 0:
-                        with self._gossip_lock:
-                            boss = self.game_state_manager.get_boss()
-                            self.game_state_manager.set_boss_health(boss.health - int(damage))
+                    if damage > 0:
+                        if self.is_leader:
+                            with self._gossip_lock:
+                                boss = self.game_state_manager.get_boss()
+                                self.game_state_manager.set_boss_health(boss.health - int(damage))
+                        else:
+                            pkt = Packet({"damage": damage}, tag=PacketTag.ATTACK,
+                                         server_uuid=UUID(self.server_uuid).int)
+                            BroadcastSocket(pkt, timeout_s=0.15, send_attempts=2).start()
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
@@ -387,7 +403,7 @@ class ServerLoop:
                 return None
 
             case _:
-                return None
+                return self.handle_gossip_message(packet,address)
 
     def on_coordinator_timeout(self):
         """Timeout callback for when no coordinator message was received after a bully ok"""
