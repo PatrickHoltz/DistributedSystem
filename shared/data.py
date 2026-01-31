@@ -90,7 +90,8 @@ class ServerInfo:
     server_uuid: str
     occupancy: int
     ip: str
-    listening_port: int
+    udp_port: int
+    tcp_port: int
 
 @dataclass
 class ClientInfo:

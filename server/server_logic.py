@@ -93,12 +93,19 @@ class ConnectionManager:
         self.broadcast_listener.start()
 
         # handles regular login requests to the assigned server
-        self.client_listener = TCPListener()
+        self.client_listener = TCPListener(self)
         self.client_listener.start()
 
-        # wait until client listener started to obtain the listener address
-        self.listener_address = self.client_listener.get_address()
-        self.server_info = ServerInfo(server_uuid, 0, self.listener_address[0], self.listener_address[1])
+        # handles incoming udp packets
+        self.udp_listener = UDPListener(self)
+        self.udp_listener.start()
+
+        # wait until the listeners obtained the listener addresses
+        self.udp_listen_port = self.udp_listener.get_port()
+        self.tcp_listener_port = self.client_listener.get_port()
+
+        self.server_info = ServerInfo(server_uuid, 0, SocketUtils.local_ip, self.udp_listen_port, self.tcp_listener_port)
+        Debug.log(f"IP: {self.server_info.ip}, UDP port: {self.server_info.udp_port}, TCP port: {self.server_info.tcp_port}")
 
         self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
 
@@ -183,7 +190,7 @@ class ConnectionManager:
                 Debug.log(f"Login request received by {login_data.username}", "LEADER")
 
                 server_info = self._assign_client()
-                login_reply = LoginReplyData(server_info.ip, server_info.listening_port, login_data.username)
+                login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
                 response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
 
                 return response
@@ -236,11 +243,12 @@ class ClientCommunicator(TCPServerConnection):
 class TCPListener(_TCPConnection, Thread):
     """A socket which accepts incoming tcp connections if they deliver a login packet with them."""
 
-    def __init__(self):
+    def __init__(self, connection_manager: ConnectionManager):
         super().__init__(mp.Queue())
 
         # Queue to communicate the actual port back to the parent process
-        self.addr_queue = mp.Queue()
+        self._connection_manager = connection_manager
+        self.port_queue = mp.Queue()
 
     def run(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -249,8 +257,7 @@ class TCPListener(_TCPConnection, Thread):
         # set a high backlog so that no login request gets lost
         self.socket.listen(50)
 
-        local_ip = SocketUtils.local_ip
-        self.addr_queue.put((local_ip, self.socket.getsockname()[1]))
+        self.port_queue.put(self.socket.getsockname()[1])
 
         while True:
             client_sock, client_addr = self.socket.accept()
@@ -261,17 +268,10 @@ class TCPListener(_TCPConnection, Thread):
                 login_data = LoginData(**packet.content)
                 self._connection_manager.add_connection(login_data.username, client_sock)
 
-            # Also read server heartbeats
-            if packet.tag == PacketTag.SERVER_HEARTBEAT and self._connection_manager.server_loop.is_leader:
-                server_info = ServerInfo(**packet.content)
 
-                Debug.log("Server heartbeat received.", "LEADER")
-                self._connection_manager.server_view[server_info.server_uuid] = server_info
-
-
-    def get_address(self) -> tuple[str, int]:
+    def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
-        return self.addr_queue.get()
+        return self.port_queue.get()
 
 
 class UDPListener(_TCPConnection, Thread):
@@ -282,15 +282,14 @@ class UDPListener(_TCPConnection, Thread):
         self._connection_manager = connection_manager
 
         # Queue to communicate the actual port back to the parent process
-        self.addr_queue = mp.Queue()
+        self.port_queue = mp.Queue()
         self.buffer_size = 65507
 
     def run(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(("0.0.0.0", 0))
 
-        local_ip = SocketUtils.local_ip
-        self.addr_queue.put((local_ip, self.socket.getsockname()[1]))
+        self.port_queue.put(self.socket.getsockname()[1])
 
         while True:
             try:
@@ -313,9 +312,9 @@ class UDPListener(_TCPConnection, Thread):
             if packet.tag == PacketTag.SERVER_HEARTBEAT and self._connection_manager.server_loop.is_leader:
                 server_info = ServerInfo(**packet.content)
 
-                Debug.log("Server heartbeat received.", "LEADER")
+                #Debug.log("Server heartbeat received.", "LEADER")
                 self._connection_manager.server_view[server_info.server_uuid] = server_info
 
-    def get_address(self) -> tuple[str, int]:
+    def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
-        return self.addr_queue.get()
+        return self.port_queue.get()

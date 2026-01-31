@@ -430,12 +430,10 @@ class Heartbeat(Thread):
     def run(self):
         self._create_socket()
 
-        print("start hb")
-
         while not self._stop_event.is_set():
             next_packet = self.packet_function()
             try:
-                print(f"sending hb to {(self.target_ip, self.port)}")
+                #print(f"sending hb to {(self.target_ip, self.port)}")
                 for _ in range(self.broadcast_attempts):
                     self.socket.sendto(next_packet.encode(), (self.target_ip, self.port))
 
