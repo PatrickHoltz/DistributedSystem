@@ -1,4 +1,5 @@
 """Provides everything needed for multicasting messages"""
+import json
 import socket
 import struct
 
@@ -9,37 +10,91 @@ from uuid import UUID
 
 @dataclass
 class MulticastPacket:
-    """Contains all the data needed for handling multicast packages"""
+    """Basic data needed for every package"""
+    type_id: int
     sender_uuid: UUID
-    sequence_number: int
-
-    # contains the actually send msg
-    content: str
+    _raw_content: str
 
     FIX_SIZE: int = 4096
 
     @staticmethod
     def get_format_str() -> str:
-        content_size = MulticastPacket.FIX_SIZE - 16 - 4
-        return '!16si' + str(content_size) + 's'
+        content_size = MulticastPacket.FIX_SIZE - 4 - 16
+        return '!I16s' + str(content_size) + 's'
 
     def pack(self) -> bytes:
         uuid = self.sender_uuid.bytes
-        chars = bytearray(self.content.encode('utf-8'))
-        data = struct.pack(MulticastPacket.get_format_str(), uuid, self.sequence_number, chars)
+        chars = self._raw_content.encode('utf-8')
+        data = struct.pack(MulticastPacket.get_format_str(), self.type_id, uuid, chars)
 
         if len(data) > MulticastPacket.FIX_SIZE:
-            warning("MulticastPacket exceeds the set fixed size of " + str(MulticastPacket.FIX_SIZE) + " (actual size: " + str(len(data)) + ")")
+            warning(f"MulticastPacket exceeds the set fixed size of {MulticastPacket.FIX_SIZE} (actual size: {len(data)})")
 
         return data
 
     @staticmethod
     def unpack(data: bytes) -> 'MulticastPacket':
-        uuid_bytes, sequence_number, content_bytes= struct.unpack(MulticastPacket.get_format_str(), data)
+        type_id, uuid_bytes, content_bytes= struct.unpack(MulticastPacket.get_format_str(), data)
         uuid = UUID(bytes=uuid_bytes)
-        content = content_bytes.decode("utf-8")
+        content = content_bytes.decode("utf-8").rstrip('\x00')
 
-        return MulticastPacket(uuid, sequence_number, content)
+        return MulticastPacket(type_id, uuid, content)
+
+class MulticastMessagePacket(MulticastPacket):
+    """Contains all the data for a new message"""
+
+    sequence_id: int
+    content: str
+
+    TYPE_ID = 1111
+
+    def __init__(self, own_uuid: UUID, sequence_id: int, msg_content: str):
+        data = {
+            "msg_sequence_id": sequence_id,
+            "msg_content": msg_content
+        }
+        MulticastPacket.__init__(self, self.TYPE_ID, own_uuid, json.dumps(data))
+
+        self.sequence_id = sequence_id
+        self.content = msg_content
+
+    @classmethod
+    def from_packet(cls, packet: MulticastPacket) -> 'MulticastMessagePacket | None':
+        if packet.type_id != cls.TYPE_ID:
+            warning(f"MulticastPacket type id does not match {cls.__class__.__name__}! (actual id: {packet.type_id})")
+            return None
+
+        data = json.loads(packet._raw_content)
+        return MulticastMessagePacket(packet.sender_uuid, data['msg_sequence_id'], data['msg_content'])
+
+class MulticastRequestMissingPacket(MulticastPacket):
+    """Contains all the data for requesting a missed message"""
+
+    msg_sender_uuid: UUID
+    msg_sequence_id: int
+
+    TYPE_ID = 2222
+
+    def __init__(self, own_uuid: UUID, sender_uuid: UUID, sequence_id: int):
+        data = {
+            "msg_sender_uuid": sender_uuid.hex,
+            "msg_sequence_id": sequence_id
+        }
+        MulticastPacket.__init__(self, self.TYPE_ID, own_uuid, json.dumps(data))
+
+        self.msg_sender_uuid = sender_uuid
+        self.msg_sequence_id = sequence_id
+
+    @classmethod
+    def from_packet(cls, packet: MulticastPacket) -> 'MulticastRequestMissingPacket | None':
+        if packet.type_id != cls.TYPE_ID:
+            warning(f"MulticastPacket type id does not match {cls.__class__.__name__}! (actual id: {packet.type_id})")
+            return None
+
+        data = json.loads(packet._raw_content)
+        uuid = UUID(hex=data['msg_sender_uuid'])
+        sequence_id = data['msg_sequence_id']
+        return MulticastRequestMissingPacket(packet.sender_uuid, uuid, sequence_id)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
@@ -74,7 +129,7 @@ class MulticastReceiver(Thread):
     def has_msgs(self) -> bool:
         return len(self.msg_queue) > 0
 
-    def get(self) -> MulticastPacket|None:
+    def get(self) -> MulticastPacket | None:
         msg = None
 
         with self.lock:
@@ -113,7 +168,7 @@ class MulticastSender(Thread):
                 msg_bytes = msg.pack()
                 self.socket.sendto(msg_bytes, (self.group, self.port))
 
-    def send(self, msg: MulticastPacket):
+    def send(self, msg: MulticastPacket) -> None:
         with self.lock:
             self.msg_queue.append(msg)
 
@@ -122,6 +177,8 @@ class Multicast:
 
     GROUP = '224.0.0.1'
     PORT = 5007
+
+    DEBUG = True
 
     uuid: UUID
 
@@ -132,7 +189,8 @@ class Multicast:
     _sequence_number: int
     _received_tracker: dict[UUID, int]
 
-    _hold_back_queue: list[MulticastPacket]
+    _hold_back_queue: list[MulticastMessagePacket]
+    _received_msgs: dict[tuple[UUID, int], MulticastMessagePacket]
 
     def __init__(self, uuid) -> None:
         self.uuid = uuid
@@ -140,6 +198,7 @@ class Multicast:
         self._sequence_number = 0
         self._received_tracker = {}
         self._hold_back_queue = []
+        self._received_msgs = {}
 
         self._sender = MulticastSender(self.GROUP, self.PORT)
         self._receiver = MulticastReceiver(self.GROUP, self.PORT)
@@ -150,7 +209,8 @@ class Multicast:
         self._receive_handler = Thread(target=self._receive_loop, args=())
         self._receive_handler.start()
 
-    def cast_msg(self, msg: str):
+    def cast_msg(self, msg: str) -> None:
+        """Multicast the provided msg"""
         self._basic_multicast(msg)
 
     def _receive_loop(self):
@@ -160,34 +220,52 @@ class Multicast:
                 if msg is None:
                     continue
 
-                print("RECV: " + str(msg.sequence_number))
-                self._on_receive(msg)
+                if self.DEBUG:
+                    print("RECV: " + str(msg.type_id))
+
+                match(msg.type_id):
+                    case MulticastMessagePacket.TYPE_ID:
+                        msg = MulticastMessagePacket.from_packet(msg)
+                        if msg is not None:
+                            self._on_receive(msg)
+
+                    case MulticastRequestMissingPacket.TYPE_ID:
+                        msg = MulticastRequestMissingPacket.from_packet(msg)
+                        if msg is not None:
+                            key = (msg.msg_sender_uuid, msg.msg_sequence_id)
+                            if key in self._received_msgs:
+                                stored_msgs = self._received_msgs[key]
+                                self._sender.send(stored_msgs) # TODO: if remulticasting is correct or just a simple direct send is intended?
 
     # basic multicast
-    def _on_receive(self, msg: MulticastPacket):
+    def _on_receive(self, msg: MulticastMessagePacket) -> None:
         tracker = self._received_tracker.get(msg.sender_uuid)
-        if msg.sequence_number == tracker or tracker is None:
-            self._received_tracker[msg.sender_uuid] = msg.sequence_number + 1
+        if msg.sequence_id == tracker or tracker is None:
+            self._received_tracker[msg.sender_uuid] = msg.sequence_id + 1
 
             self._basic_deliver(msg)
 
             self._clear_hold_back_queue(msg.sender_uuid)
 
-        elif msg.sequence_number > tracker:
-            # TODO: request missing message
+        elif msg.sequence_id > tracker:
+            missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
+            self._sender.send(missing_req)
+
             self._hold_back_queue.append(msg)
 
         # else ignore duplicate msg
 
-    def _basic_multicast(self, content: str):
-        msg = MulticastPacket(self.uuid, self._sequence_number, content)
+    def _basic_multicast(self, content: str) -> None:
+        msg = MulticastMessagePacket(self.uuid, self._sequence_number, content)
 
         self._sequence_number += 1
         self._sender.send(msg)
 
-    def _basic_deliver(self, msg: MulticastPacket):
-        #if msg.sender_uuid != self.uuid:
-            print("Deliver: "+ str(msg.sequence_number) + " > " + msg.content)
+    def _basic_deliver(self, msg: MulticastMessagePacket) -> None:
+        self._received_msgs[(msg.sender_uuid, msg.sequence_id)] = msg
+
+        if self.DEBUG:
+            print(f"Deliver: {msg.sequence_id} > {msg.content}")
 
     def _clear_hold_back_queue(self, sender_uuid: UUID):
         tracker = self._received_tracker.get(sender_uuid)
@@ -196,7 +274,7 @@ class Multicast:
             if msg.sender_uuid != sender_uuid:
                 continue
 
-            if msg.sequence_number == tracker:
+            if msg.sequence_id == tracker:
                 next_msg = msg
                 break
 
