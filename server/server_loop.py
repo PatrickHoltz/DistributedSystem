@@ -69,7 +69,6 @@ class ServerLoop:
 
         self._next_monster_sync = time.monotonic() + random.uniform(0.0, self.GOSSIP_MONSTER_SYNC_INTERVAL)
 
-        print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
         self._heartbeat: Optional[Heartbeat] = None
 
         self.coordinator_timer: Timer | None = None
@@ -98,7 +97,7 @@ class ServerLoop:
             self._process_incoming_messages()
 
             # Leader computes monster HP/stage based on merged damage counters
-            self._leader_apply_monsters_progress()
+            self._leader_apply_monster_progress()
 
             # Everyone gossips PlayerStats
             if now >= self._next_gossip_stats:
@@ -137,7 +136,7 @@ class ServerLoop:
 
             case PacketTag.GOSSIP_MONSTER_SYNC:
                 sync_leader = packet.content.get("leader_uuid")
-                if self.leader_uuid is not None and sync_leader != self.leader_uuid:
+                if self.leader_info is not None and sync_leader != self.leader_info.server_uuid:
                     return None
 
                 new_monster_id = packet.content.get("monster_id")
@@ -146,7 +145,7 @@ class ServerLoop:
                 if not new_monster_id or not isinstance(monster_dict, dict):
                     return None
 
-                new_monster = Data(**monster_dict)
+                new_monster = MonsterData(**monster_dict)
 
                 with self._gossip_lock:
                     monster_changed = (new_monster_id != self.monster_id)
@@ -318,7 +317,7 @@ class ServerLoop:
                     # if I am the leader, leader election is finished
                     if self.is_leader:
                         coord = Packet(
-                            CoordinatorMessage(leader_uuid=self.server_uuid),
+                            self.leader_info,
                             tag=PacketTag.BULLY_COORDINATOR,
                             server_uuid=UUID(self.server_uuid).int
                         )

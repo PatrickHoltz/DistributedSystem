@@ -111,7 +111,7 @@ class GameStateManager:
             health = self._game_state.monster.max_health
         self._game_state.monster.health = health
 
-    def advance_monsters_stage(self):
+    def advance_monster_stage(self):
         """Only leader should call"""
         self._advance_monster_stage()
 
@@ -262,7 +262,7 @@ class ConnectionManager:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
 
         if packet.tag in {PacketTag.GOSSIP_PLAYER_STATS, PacketTag.GOSSIP_MONSTER_SYNC}:
-            return self.server_loop.handle_gossip_message(packet, address)
+            return self.server_loop.handle_gossip_message(packet, _address)
 
         if packet.tag == PacketTag.LOGIN:
             # Non leaders ignore login messages
@@ -275,9 +275,6 @@ class ConnectionManager:
 
                 server_info = self._assign_client()
                 login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
-                game_state_update = self.server_loop.game_state_manager.get_player_state(login_data.username)
-                login_reply = LoginReplyData(server_port, game_state_update)
-
                 response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
 
                 return response

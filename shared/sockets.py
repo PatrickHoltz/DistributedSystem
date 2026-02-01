@@ -37,10 +37,6 @@ class SocketUtils:
     GOSSIP_PLAYER_STATS = "gossip_player_stats"
     GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
 
-class Packet:
-    """Basic packet for client-server communication.
-    """
-
     @classmethod
     def recv_packet(cls, sock: socket.socket) -> Packet:
         """Blocks until a full packet is received from the socket.
