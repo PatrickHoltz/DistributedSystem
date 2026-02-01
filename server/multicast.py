@@ -262,8 +262,24 @@ class Multicast:
         self._sender.send(msg)
 
     def _basic_deliver(self, msg: MulticastMessagePacket) -> None:
-        self._received_msgs[(msg.sender_uuid, msg.sequence_id)] = msg
+        key = (msg.sender_uuid, msg.sequence_id)
+        if key not in self._received_msgs:
+            self._received_msgs[key] = msg
 
+            if msg.sender_uuid != self.uuid:
+                self._sender.send(msg)
+
+            self._reliable_deliver(msg)
+
+    def _reliable_multicast(self, content: str) -> None:
+        data = {
+            'received_tracker': self._received_tracker,
+            'content': content
+        }
+        json_str = json.dumps(data)
+        self._basic_multicast(json_str)
+
+    def _reliable_deliver(self, msg: MulticastMessagePacket) -> None:
         if self.DEBUG:
             print(f"Deliver: {msg.sequence_id} > {msg.content}")
 
