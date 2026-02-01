@@ -5,9 +5,9 @@
 - [ ] Startup
   - [ ] Discover leader
     - [x] Broadcast into server network
-    - [ ] Handle leader answer
-    - [ ] Start leader election
-      - [ ] Perform **bully algorithm** 
+    - [x] Handle leader answer
+    - [x] Start leader election
+      - [x] Perform **bully algorithm** 
         - [ ] *Check if our modification satisfies failure modes*
 - [ ] Handle clients
   - [ ] Handle client assignment by leader
