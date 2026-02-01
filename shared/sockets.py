@@ -7,33 +7,31 @@ import socket
 import struct
 from collections import deque
 from concurrent.futures import Future
-from dataclasses import asdict, is_dataclass
-from enum import StrEnum
 from threading import Thread, Event
-from typing import Optional, Tuple, Callable, TypeVar, Type
-from uuid import uuid4
+from typing import Optional, Callable, TypeVar, Type
+
+from shared.packet import Packet
 
 
-class PacketTag(StrEnum):
-    NONE = "none"
-    LOGIN = "login"
-    LOGOUT = "logout"
-    ATTACK = "attack"
-    PLAYER_GAME_STATE = "player_game_state"
-    STRING_MESSAGE = "string_message"
-    NEW_BOSS = "new_boss"
-    BOSS_DEAD = "boss_dead"
-    CLIENT_PING = "client_ping"
-    CLIENT_PONG = "client_pong"
-    SERVER_HELLO = "server_hello"
-    LOGIN_REPLY = "login_reply"
+class SocketUtils:
+    T = TypeVar('T')
 
-    #Bully
-    BULLY_ELECTION = "election"
-    BULLY_OK = "ok"
-    BULLY_COORDINATOR = "coordinator"
-    BULLY_LEADER_HEARTBEAT = "leader_heartbeat"
-
+    @classmethod
+    def recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
+        """Receives exactly n bytes from the given connection. By default blocks until the data is received.
+        If a timeout is set and the data is not available, a timeout error is raised.
+        """
+        old_timeout = conn.gettimeout()
+        conn.settimeout(timeout_s)
+        data = b""
+        while len(data) < n_bytes:
+            chunk = conn.recv(n_bytes - len(data))
+            if not chunk:
+                conn.close()
+                raise ConnectionError("connection closed")
+            data += chunk
+        conn.settimeout(old_timeout)
+        return data
     #Gossip
     GOSSIP_PLAYER_STATS = "gossip_player_stats"
     GOSSIP_BOSS_SYNC = "gossip_boss_sync"
@@ -42,42 +40,41 @@ class Packet:
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = None, server_uuid: int = -1, length: int = 0):
-        """Content must be a dataclass"""
-        self.content = content
-        self.tag = tag
-        self.packet_uuid = str(uuid4()) if packet_uuid is None else packet_uuid
-        self.server_uuid = server_uuid
-        
-        self._length = length
-
-    def _to_dictionary(self) -> dict[str, object]:
-        if not is_dataclass(self.content):
-            raise TypeError("Could not encode packet. Packet content must be a dataclass.")
-        dictionary = dict()
-        dictionary['tag'] = self.tag.value
-        dictionary['packet_uuid'] = self.packet_uuid
-        dictionary['server_uuid'] = self.server_uuid
-        dictionary['content'] = asdict(self.content)
-        return dictionary
-
-    def encode(self) -> bytes:
-        """Encodes a packet to a byte array ready to send. The returned bytes start with a 4 byte data length.
-        """
-        json_string = json.dumps(self._to_dictionary())
-        json_bytes = json_string.encode()
-
-        # prepend the data length as a 4-byte integer
-        data_length = struct.pack('!I', len(json_bytes))
-        return data_length + json_bytes
-
     @classmethod
-    def decode(cls, data: bytes) -> 'Packet':
-        """Decodes a byte array into a packet ready to use. The content is kept as a dictionary.
+    def recv_packet(cls, sock: socket.socket) -> Packet:
+        """Blocks until a full packet is received from the socket.
         """
-        data_length = int.from_bytes(data[0:4])
-        dictionary = json.loads(data[4:].decode())
-        return cls(dictionary['content'], PacketTag(dictionary["tag"]), str(dictionary["packet_uuid"]), int(dictionary["server_uuid"]) , data_length)
+        length_bytes = cls.recv_exact(4, sock)
+        data_length = struct.unpack('!I', length_bytes)[0]
+        json_bytes = cls.recv_exact(data_length, sock)
+        packet = Packet.decode(length_bytes + json_bytes)
+        return packet
+
+    @staticmethod
+    def _get_local_ip() -> str:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Doesn't need to be reachable
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+
+    local_ip = _get_local_ip()
+
+
+    # TODO use this method everywhere where packets are being received. Also make Packet generic
+    @classmethod
+    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
+        """
+        Extracts the content of a packet and converts it to the specified type.
+        Returns None if the conversion fails.
+        """
+        try:
+            content = content_type(**packet.content)
+            return Packet(content=content, tag=packet.tag)
+        except TypeError:
+            return None
 
 
 class UDPSocket(Thread):
@@ -186,18 +183,20 @@ class BroadcastListener(Thread):
         self._stop_event = Event()
         self.latest_uuids = deque(["" for _ in range(100)])
 
+        self.port_queue = mp.Queue()
+
     def stop(self):
         self._stop_event.set()
 
     def run(self):
-        local_ip = self.get_local_ip()
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # alle interfaces
         sock.bind(("", self.port))
         # Timeout, damit recvfrom nicht unendlich blockiert
         sock.settimeout(5.0)
+
+        self.port_queue.put(sock.getsockname()[1])
         try:
             while not self._stop_event.is_set():
                 try:
@@ -236,13 +235,9 @@ class BroadcastListener(Thread):
         finally:
             sock.close()
 
-    @staticmethod
-    def get_local_ip():
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Connect to a dummy address (8.8.8.8) to trigger the OS
-            # to pick the correct outgoing interface. No data is actually sent.
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+    def get_port(self) -> int:
+        """Returns the port the server is listening on. Blocks until the port is available."""
+        return self.port_queue.get()
 
 
 class _TCPConnection:
@@ -251,9 +246,8 @@ class _TCPConnection:
     T = TypeVar('T')
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
-    def __init__(self, address: Tuple[str, int], recv_queue: mp.Queue):
+    def __init__(self, recv_queue: mp.Queue):
         super().__init__()
-        self.address = address
 
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
@@ -263,32 +257,6 @@ class _TCPConnection:
 
 
         self.socket: Optional[socket.socket] = None
-
-    @classmethod
-    def _recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
-        old_timeout = conn.gettimeout()
-        conn.settimeout(timeout_s)
-        data = b""
-        while len(data) < n_bytes:
-            chunk = conn.recv(n_bytes - len(data))
-            if not chunk:
-                conn.close()
-                raise ConnectionError("connection closed")
-            data += chunk
-        conn.settimeout(old_timeout)
-        return data
-
-    @classmethod
-    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
-        """
-        Extracts the content of a packet and converts it to the specified type.
-        Returns None if the conversion fails.
-        """
-        try:
-            content = content_type(**packet.content)
-            return Packet(content=content, tag=packet.tag)
-        except TypeError:
-            return None
 
     def send(self, packet: Packet):
         """Provides a packet to be sent as soon as possible."""
@@ -320,16 +288,6 @@ class _TCPConnection:
             except OSError:
                 pass
 
-
-    def _recv_packet(self, sock: socket.socket) -> Packet:
-        """Blocks until a full packet is received from the socket.
-        """
-        length_bytes = self._recv_exact(4, sock)
-        data_length = struct.unpack('!I', length_bytes)[0]
-        json_bytes = self._recv_exact(data_length, sock)
-        packet = Packet.decode(length_bytes + json_bytes)
-        return packet
-
     def _send_queued_packets(self, conn: socket.socket):
         try:
             while True:
@@ -351,7 +309,7 @@ class _TCPConnection:
     def receiver(self, conn: socket.socket):
         while not self._stop_event.is_set():
             try:
-                packet = self._recv_packet(conn)
+                packet = SocketUtils.recv_packet(conn)
                 self._handle_packet(packet)
             except (ConnectionError, OSError):
                 try:
@@ -370,11 +328,13 @@ class TCPClientConnection(_TCPConnection, Thread):
 
     T = TypeVar('T')
 
-    def __init__(self, address: Tuple[str, int]):
+    def __init__(self, address: tuple[str, int]):
         """
         Initializes a TCP client which connects to the specified address.
         """
-        super().__init__(address, queue.Queue())
+        super().__init__(queue.Queue())
+
+        self.address = address
 
     def run(self):
         # Establish connection
@@ -403,16 +363,16 @@ class TCPClientConnection(_TCPConnection, Thread):
             self.socket.close()
 
 
-class TCPServerConnection(_TCPConnection, mp.Process):
+class TCPServerConnection(_TCPConnection, Thread):
     """A simple TCP server connection that accepts a single connection and can send and receive packets."""
 
-    def __init__(self, recv_queue: mp.Queue, address: Tuple[str, int] = ("", 0), backlog: int = 1):
+    def __init__(self, conn_socket: socket.socket, recv_queue: mp.Queue, backlog: int = 1):
         """
         Initializes a TCP server which listens on the specified address.
         """
-        super().__init__(address, recv_queue)
-        self.address = address
+        super().__init__(recv_queue)
         self.backlog = backlog
+        self.socket = conn_socket
 
         # Queue to communicate the actual port back to the parent process
         self.port_queue = mp.Queue()
@@ -422,29 +382,16 @@ class TCPServerConnection(_TCPConnection, mp.Process):
         return self.port_queue.get()
 
     def run(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # damit man nach crash direkt wieder benutzen kann
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind(self.address)
-
-        self.socket.listen(self.backlog)
 
         self.port_queue.put(self.socket.getsockname()[1])
 
-        # accept a single connection
-        self.socket.settimeout(None)
-        conn, client_address = self.socket.accept()
-        print("TCP connection established with ", client_address)
-
         # Start sender and receiver threads
-        sender = Thread(target=self.sender, args=(conn,),daemon=True)
-        receiver = Thread(target=self.receiver, args=(conn,),daemon=True)
+        sender = Thread(target=self.sender, args=(self.socket,),daemon=True)
+        receiver = Thread(target=self.receiver, args=(self.socket,),daemon=True)
 
         sender.start()
         receiver.start()
         sender.join()
         sender.join()
 
-        if conn is not None:
-            conn.close()
         self.socket.close()

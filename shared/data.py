@@ -10,7 +10,7 @@ class PlayerData:
     #damageDone: int
 
 @dataclass
-class BossData:
+class MonsterData:
     name: str
     stage: int
     health: int
@@ -19,43 +19,40 @@ class BossData:
 @dataclass
 class GameStateData:
     players: dict[str, PlayerData]
-    boss: BossData
+    monster: MonsterData
 
     @classmethod
     def from_dict(cls, data: dict):
         players = {username: PlayerData(**pdata) for username, pdata in data['players'].items()}
-        boss_data = BossData(**data['boss'])
-        return cls(players=players, boss=boss_data)
+        monster_data = MonsterData(**data['monster'])
+        return cls(players=players, monster=monster_data)
 
 @dataclass
 class PlayerGameStateData:
     """Snapshot of the game state relevant to a specific player."""
-    boss: BossData
+    monster: MonsterData
     player: PlayerData
     player_count: int
     latest_damages: list[int]
 
     @classmethod
     def from_dict(cls, data: dict):
-        boss_data = BossData(**data['boss'])
+        monster_data = MonsterData(**data['monster'])
         player_data = PlayerData(**data['player'])
         player_count = data['player_count']
         latest_damages = data['latest_damages']
-        return cls(boss=boss_data, player=player_data, player_count=player_count, latest_damages=latest_damages)
+        return cls(monster=monster_data, player=player_data, player_count=player_count, latest_damages=latest_damages)
 
 @dataclass
 class LoginReplyData:
+    """Data sent back to client after a login broadcast."""
+    server_ip: str
     server_port: int
-    game_state: PlayerGameStateData
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        server_port = data['server_port']
-        game_state = PlayerGameStateData.from_dict(data['game_state']) if data['game_state'] else None
-        return cls(server_port=server_port, game_state=game_state)
+    username: str
 
 @dataclass
 class LoginData:
+    """Data sent by a client for a login request"""
     username: str
 
 @dataclass
@@ -81,10 +78,33 @@ class OkMessage:
 @dataclass
 class CoordinatorMessage:
     leader_uuid: str
+    leader_ip: str
+    leader_port: int
 
 @dataclass
 class LeaderHeartbeat:
     leader_uuid: str
+    leader_ip: str
+    leader_port: int
+
+@dataclass
+class ServerInfo:
+    server_uuid: str
+    occupancy: int
+    ip: str
+    udp_port: int
+    tcp_port: int
+
+@dataclass
+class ServerState:
+    server_info: ServerInfo
+    last_seen: float
+
+@dataclass
+class ClientInfo:
+    username: str
+    ip: str
+    port: int
 
 @dataclass
 class GossipBossSync:
