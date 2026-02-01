@@ -107,17 +107,17 @@ class ClientInfo:
     port: int
 
 @dataclass
-class GossipBossSync:
-    boss_id: str
+class GossipMonsterSync:
+    monster_id: str
     leader_uuid: str
-    boss: BossData
+    monster: MonsterData
 
     @classmethod
     def from_dict(cls, data: dict):
         return cls(
-            boss_id=data["boss_id"],
+            monster_id=data["monster_id"],
             leader_uuid=data["leader_uuid"],
-            boss=BossData(**data["boss"]),
+            monster=MonsterData(**data["monster"]),
         )
 
 @dataclass

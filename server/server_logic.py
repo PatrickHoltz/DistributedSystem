@@ -98,26 +98,26 @@ class GameStateManager:
             return damage
         return 0
 
-    def _advance_boss_stage(self):
-        new_stage = self._game_state.boss.stage + 1
-        new_boss = self._create_boss(new_stage)
-        self._game_state.boss = new_boss
+    def _advance_monster_stage(self):
+        new_stage = self._game_state.monster.stage + 1
+        new_monster = self._create_monster(new_stage)
+        self._game_state.monster = new_monster
 
-    def set_boss_health(self, health: int ):
-        """Sets the boss health. Only the leader should call this"""
+    def set_monster_health(self, health: int ):
+        """Sets the monster health. Only the leader should call this"""
         if health < 0:
             health = 0
-        if health > self._game_state.boss.max_health:
-            health = self._game_state.boss.max_health
-        self._game_state.boss.health = health
+        if health > self._game_state.monster.max_health:
+            health = self._game_state.monster.max_health
+        self._game_state.monster.health = health
 
-    def advance_boss_stage(self):
+    def advance_monsters_stage(self):
         """Only leader should call"""
-        self._advance_boss_stage()
+        self._advance_monster_stage()
 
-    def set_boss(self, boss: BossData):
-        """Follower takes boss from leader"""
-        self._game_state.boss = boss
+    def set_monster(self, monster: MonsterData):
+        """Follower takes monster from leader"""
+        self._game_state.monster = monster
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online."""
@@ -261,7 +261,7 @@ class ConnectionManager:
     def handle_broadcast(self, packet: Packet, _address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
 
-        if packet.tag in {PacketTag.GOSSIP_PLAYER_STATS, PacketTag.GOSSIP_BOSS_SYNC}:
+        if packet.tag in {PacketTag.GOSSIP_PLAYER_STATS, PacketTag.GOSSIP_MONSTER_SYNC}:
             return self.server_loop.handle_gossip_message(packet, address)
 
         if packet.tag == PacketTag.LOGIN:

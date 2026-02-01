@@ -32,9 +32,10 @@ class SocketUtils:
             data += chunk
         conn.settimeout(old_timeout)
         return data
+
     #Gossip
     GOSSIP_PLAYER_STATS = "gossip_player_stats"
-    GOSSIP_BOSS_SYNC = "gossip_boss_sync"
+    GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
 
 class Packet:
     """Basic packet for client-server communication.

@@ -35,7 +35,7 @@ class ServerLoop:
     DEBUG = True
 
     GOSSIP_PLAYER_STATS_INTERVAL = 0.50
-    GOSSIP_BOSS_SYNC_INTERVAL = 0.35
+    GOSSIP_MONSTER_SYNC_INTERVAL = 0.35
 
     def __init__(self):
         super().__init__()
@@ -61,13 +61,13 @@ class ServerLoop:
         self._last_leader_seen = time.monotonic()
 
         self._gossip_lock = Lock()
-        self.boss_id: str = str(uuid4())
+        self.monster_id: str = str(uuid4())
 
         self._stats_seq: int = 0
         self._last_stats_seq_by_server: dict[str, int] = {}
         self._next_gossip_stats = time.monotonic() + random.uniform(0.0, self.GOSSIP_PLAYER_STATS_INTERVAL)
 
-        self._next_boss_sync = time.monotonic() + random.uniform(0.0, self.GOSSIP_BOSS_SYNC_INTERVAL)
+        self._next_monster_sync = time.monotonic() + random.uniform(0.0, self.GOSSIP_MONSTER_SYNC_INTERVAL)
 
         print(f"[SERVER] Started new server with UUID<{self.server_uuid}>")
         self._heartbeat: Optional[Heartbeat] = None
@@ -97,17 +97,17 @@ class ServerLoop:
 
             self._process_incoming_messages()
 
-            # Leader computes boss HP/stage based on merged damage counters
-            self._leader_apply_boss_progress()
+            # Leader computes monster HP/stage based on merged damage counters
+            self._leader_apply_monsters_progress()
 
             # Everyone gossips PlayerStats
             if now >= self._next_gossip_stats:
                 self._next_gossip_stats += self.GOSSIP_PLAYER_STATS_INTERVAL
                 self._broadcast_player_stats()
 
-            if self.is_leader and now >= self._next_boss_sync:
-                self._next_boss_sync += self.GOSSIP_BOSS_SYNC_INTERVAL
-                self._broadcast_boss_sync()
+            if self.is_leader and now >= self._next_monster_sync:
+                self._next_monster_sync += self.GOSSIP_MONSTER_SYNC_INTERVAL
+                self._broadcast_monster_sync()
 
             self._update_game_states()
             self._send_outgoing_messages()
@@ -135,26 +135,26 @@ class ServerLoop:
                 self.game_state_manager.merge_player_stats(players)
                 return None
 
-            case PacketTag.GOSSIP_BOSS_SYNC:
+            case PacketTag.GOSSIP_MONSTER_SYNC:
                 sync_leader = packet.content.get("leader_uuid")
                 if self.leader_uuid is not None and sync_leader != self.leader_uuid:
                     return None
 
-                new_boss_id = packet.content.get("boss_id")
-                boss_dict = packet.content.get("boss")
+                new_monster_id = packet.content.get("monster_id")
+                monster_dict = packet.content.get("monster")
 
-                if not new_boss_id or not isinstance(boss_dict, dict):
+                if not new_monster_id or not isinstance(monster_dict, dict):
                     return None
 
-                new_boss = BossData(**boss_dict)
+                new_monster = Data(**monster_dict)
 
                 with self._gossip_lock:
-                    boss_changed = (new_boss_id != self.boss_id)
-                    self.boss_id = new_boss_id
-                    self.game_state_manager.set_boss(new_boss)
+                    monster_changed = (new_monster_id != self.monster_id)
+                    self.monster_id = new_monster_id
+                    self.game_state_manager.set_monster(new_monster)
 
-                    if boss_changed:
-                        self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
+                    if monster_changed:
+                        self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
                         pass
                 return None
 
@@ -165,8 +165,8 @@ class ServerLoop:
                 damage = packet.content.get("damage")
                 if damage and isinstance(damage, (int, float)) and damage > 0:
                     with self._gossip_lock:
-                        boss = self.game_state_manager.get_boss()
-                        self.game_state_manager.set_boss_health(boss.health - int(damage))
+                        monster = self.game_state_manager.get_monster()
+                        self.game_state_manager.set_monster_health(monster.health - int(damage))
                 return None
 
             case _:
@@ -180,30 +180,30 @@ class ServerLoop:
         pkt = Packet(msg, tag=PacketTag.GOSSIP_PLAYER_STATS, server_uuid=UUID(self.server_uuid).int)
         BroadcastSocket(pkt, timeout_s=0.15, send_attempts=2).start()
 
-    def _broadcast_boss_sync(self):
+    def _broadcast_monster_sync(self):
         if not self.is_leader:
             return
-        boss = self.game_state_manager.get_boss()
-        msg = GossipBossSync(boss_id=self.boss_id, leader_uuid=self.server_uuid, boss=boss)
-        pkt = Packet(msg, tag=PacketTag.GOSSIP_BOSS_SYNC, server_uuid=UUID(self.server_uuid).int)
+        monster = self.game_state_manager.get_monster()
+        msg = GossipMonsterSync(monster_id=self.monster_id, leader_uuid=self.server_uuid, monster=monster)
+        pkt = Packet(msg, tag=PacketTag.GOSSIP_MONSTER_SYNC, server_uuid=UUID(self.server_uuid).int)
         BroadcastSocket(pkt, timeout_s=0.15, send_attempts=2).start()
 
-    def _leader_apply_boss_progress(self):
-        """Leader-only: if boss is dead, advance stage and announce a new boss_id"""
+    def _leader_apply_monster_progress(self):
+        """Leader-only: if monster is dead, advance stage and announce a new monster_id"""
         if not self.is_leader:
             return
 
         with self._gossip_lock:
-            boss = self.game_state_manager.get_boss()
-            if boss.health > 0:
+            monster = self.game_state_manager.get_monster()
+            if monster.health > 0:
                 return
 
-            self.game_state_manager.advance_boss_stage()
-            self.boss_id = str(uuid4())
+            self.game_state_manager.advance_monster_stage()
+            self.monster_id = str(uuid4())
 
-            new_boss = self.game_state_manager.get_boss()
-            self.multicast_packet(Packet(new_boss, tag=PacketTag.NEW_BOSS))
-            self._broadcast_boss_sync()
+            new_monster = self.game_state_manager.get_monster()
+            self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
+            self._broadcast_monster_sync()
 
     def stop(self):
         self._is_stopped = True
@@ -250,8 +250,8 @@ class ServerLoop:
                     if damage > 0:
                         if self.is_leader:
                             with self._gossip_lock:
-                                boss = self.game_state_manager.get_boss()
-                                self.game_state_manager.set_boss_health(boss.health - int(damage))
+                                monster = self.game_state_manager.get_monster()
+                                self.game_state_manager.set_monster_health(monster.health - int(damage))
                         else:
                             pkt = Packet({"damage": damage}, tag=PacketTag.ATTACK,
                                          server_uuid=UUID(self.server_uuid).int)
