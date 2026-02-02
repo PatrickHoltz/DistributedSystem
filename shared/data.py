@@ -6,6 +6,8 @@ class PlayerData:
     damage: int
     level: int
     online: bool
+    last_seen_ts: float = 0.0
+    #damageDone: int
 
 @dataclass
 class MonsterData:
@@ -104,3 +106,27 @@ class ClientInfo:
     ip: str
     port: int
 
+@dataclass
+class GossipMonsterSync:
+    monster_id: str
+    leader_uuid: str
+    monster: MonsterData
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        return cls(
+            monster_id=data["monster_id"],
+            leader_uuid=data["leader_uuid"],
+            monster=MonsterData(**data["monster"]),
+        )
+
+@dataclass
+class PlayerStats:
+    player_count: int
+    players: dict[str, PlayerData]
+
+@dataclass
+class GossipPlayerStats:
+    server_uuid: str
+    seq: int
+    stats: PlayerStats

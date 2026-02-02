@@ -21,10 +21,66 @@ if TYPE_CHECKING:
 class GameStateManager:
     """Manager of the overall game state."""
     base_damage = 10
+    ONLINE_TTL_SECONDS = 10.0
 
     def __init__(self):
         self._game_state = GameStateData(players={}, monster=self._create_monster(1))
         self.latest_damage_numbers: list[int] = []
+
+    def touch_player(self, username: str):
+        """Update last_seen_ts for TTL-online"""
+        now = time.time()
+        player = self._game_state.players.get(username)
+        if player is None:
+            return
+        player.last_seen_ts = now
+        player.online = True
+
+    def _refresh_online_flags(self):
+        """Derive online from last_seen_ts using TTL."""
+        now = time.time()
+        for player in self._game_state.players.values():
+            last = float(getattr(player, "last_seen_ts", 0.0))
+            player.online = (now - last) < self.ONLINE_TTL_SECONDS
+
+    def get_player_stats(self) -> PlayerStats:
+        """Gossip-safe stats: username/level/last_seen_ts per player."""
+        self._refresh_online_flags()
+        players_meta: dict[str, dict] = {}
+        for username, p in self._game_state.players.items():
+            players_meta[username] = {
+                "username": p.username,
+                "level": int(p.level),
+                "last_seen_ts": float(getattr(p, "last_seen_ts", 0.0)),
+            }
+        return PlayerStats(
+            player_count=self.get_online_player_count(),
+            players=players_meta
+        )
+
+    def merge_player_stats(self, incoming_players: dict[str, dict]):
+        """Merge gossip-safe player metaData into local state."""
+        for username, metaData in incoming_players.items():
+            incoming_username = metaData.get("username", username)
+            incoming_level = int(metaData.get("level", 1))
+            incoming_seen = float(metaData.get("last_seen_ts", 0.0))
+
+            cur = self._game_state.players.get(username)
+            if cur is None:
+                self._game_state.players[username] = PlayerData(
+                    username=incoming_username,
+                    damage=self.base_damage,
+                    online=True,
+                    level=incoming_level,
+                    last_seen_ts=incoming_seen,
+                )
+                continue
+
+            cur.level = max(int(cur.level), incoming_level)
+            cur.last_seen_ts = max(float(getattr(cur, "last_seen_ts", 0.0)), incoming_seen)
+
+        self._refresh_online_flags()
+
 
     @classmethod
     def _create_monster(cls, stage: int) -> MonsterData:
@@ -39,32 +95,53 @@ class GameStateManager:
             damage = self._game_state.players[username].damage
             self._game_state.monster.health -= damage
             self.latest_damage_numbers.append(damage)
-            monster_defeated = self._game_state.monster.health <= 0
-            if monster_defeated:
-                print("Monster defeated. Advancing to next stage.")
-                self._game_state.monster.health = 0
-                self._advance_monster_stage()
-            return monster_defeated
-        return self._game_state.monster.health <= 0
+            return damage
+        return 0
 
     def _advance_monster_stage(self):
         new_stage = self._game_state.monster.stage + 1
         new_monster = self._create_monster(new_stage)
         self._game_state.monster = new_monster
 
-    def login_player(self, username: str):
-        """Creates a new player entry if it does not exist and marks the player as online in all cases."""
-        if username not in self._game_state.players:
-            self._game_state.players[username] = PlayerData(username=username, damage=self.base_damage, level=1,
-                                                            online=True)
-        else:
-            self._game_state.players[username].online = True
+    def set_monster_health(self, health: int ):
+        """Sets the monster health. Only the leader should call this"""
+        if health < 0:
+            health = 0
+        if health > self._game_state.monster.max_health:
+            health = self._game_state.monster.max_health
+        self._game_state.monster.health = health
 
+    def advance_monster_stage(self):
+        """Only leader should call"""
+        self._advance_monster_stage()
+
+    def set_monster(self, monster: MonsterData):
+        """Follower takes monster from leader"""
+        self._game_state.monster = monster
+
+    def login_player(self, username: str):
+        """Creates a new player entry if it does not exist and marks the player as online."""
+        now = time.time()
+        if username not in self._game_state.players:
+            self._game_state.players[username] = PlayerData(
+                username=username,
+                damage=self.base_damage,
+                online=True,
+                level=1,
+                last_seen_ts=now,
+            )
+        else:
+            player = self._game_state.players[username]
+            player.online = True
+            player.last_seen_ts = now
+    
     def logout_player(self, username: str):
         if username in self._game_state.players:
             self._game_state.players[username].online = False
+            self._game_state.players[username].last_seen_ts = 0.0
 
     def get_player_state(self, username: str) -> PlayerGameStateData:
+        self._refresh_online_flags()
         return PlayerGameStateData(
             monster=self._game_state.monster,
             player_count=self.get_online_player_count(),
@@ -75,6 +152,7 @@ class GameStateManager:
     def get_monster(self) -> MonsterData:
         return self._game_state.monster
     def get_online_player_count(self) -> int:
+        self._refresh_online_flags()
         online_players = [p for p in self._game_state.players.values() if p.online]
         return len(online_players)
 
@@ -125,7 +203,6 @@ class ConnectionManager:
         """Adds a new active connection and registers it in the game state manager.
         Returns the port number the client communicator is listening on.
         """
-
         self.server_loop.game_state_manager.login_player(username)
 
         communicator = ClientCommunicator(conn_socket, username, self.server_loop.in_queue)
@@ -160,6 +237,7 @@ class ConnectionManager:
 
     def mark_seen(self, username: str):
         self.last_seen[username] = time.monotonic()
+        self.server_loop.game_state_manager.touch_player(username)
 
     def tick_client_heartbeat(self, now: float):
         """
@@ -183,6 +261,9 @@ class ConnectionManager:
     def handle_broadcast(self, packet: Packet, _address: tuple[str, int]):
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
 
+        if packet.tag in {PacketTag.GOSSIP_PLAYER_STATS, PacketTag.GOSSIP_MONSTER_SYNC}:
+            return self.server_loop.handle_gossip_message(packet, _address)
+
         if packet.tag == PacketTag.LOGIN:
             # Non leaders ignore login messages
             if not self.server_loop.is_leader:
@@ -200,7 +281,6 @@ class ConnectionManager:
             except TypeError as e:
                 print("Invalid login data received.", e)
         return None
-
 
 class ClientCommunicator(TCPServerConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.
@@ -241,5 +321,3 @@ class ClientCommunicator(TCPServerConnection):
         # Put the received, typed packet onto the shared in_queue so the
         # main ServerLoop process can consume it.
         self._recv_queue.put((self._username, typed_packet))
-
-

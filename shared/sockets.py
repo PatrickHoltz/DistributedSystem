@@ -33,6 +33,10 @@ class SocketUtils:
         conn.settimeout(old_timeout)
         return data
 
+    #Gossip
+    GOSSIP_PLAYER_STATS = "gossip_player_stats"
+    GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
+
     @classmethod
     def recv_packet(cls, sock: socket.socket) -> Packet:
         """Blocks until a full packet is received from the socket.
@@ -388,4 +392,3 @@ class TCPServerConnection(_TCPConnection, Thread):
         sender.join()
 
         self.socket.close()
-
