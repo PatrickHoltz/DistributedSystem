@@ -15,7 +15,7 @@ class MulticastPacket:
     sender_uuid: UUID
     _raw_content: str
 
-    FIX_SIZE: int = 4096
+    FIX_SIZE: int = 16384
 
     @staticmethod
     def get_format_str() -> str:
@@ -187,7 +187,7 @@ class Multicast:
     _receive_handler: Thread
 
     _sequence_number: int
-    _received_tracker: dict[UUID, int]
+    _received_tracker: dict[str, int]
 
     _hold_back_queue: list[MulticastMessagePacket]
     _received_msgs: dict[tuple[UUID, int], MulticastMessagePacket]
@@ -211,7 +211,7 @@ class Multicast:
 
     def cast_msg(self, msg: str) -> None:
         """Multicast the provided msg"""
-        self._basic_multicast(msg)
+        self._reliable_multicast(msg)
 
     def _receive_loop(self):
         while True:
@@ -239,9 +239,9 @@ class Multicast:
 
     # basic multicast
     def _on_receive(self, msg: MulticastMessagePacket) -> None:
-        tracker = self._received_tracker.get(msg.sender_uuid)
+        tracker = self._received_tracker.get(msg.sender_uuid.hex)
         if msg.sequence_id == tracker or tracker is None:
-            self._received_tracker[msg.sender_uuid] = msg.sequence_id + 1
+            self._received_tracker[msg.sender_uuid.hex] = msg.sequence_id + 1
 
             self._basic_deliver(msg)
 
@@ -284,7 +284,7 @@ class Multicast:
             print(f"Deliver: {msg.sequence_id} > {msg.content}")
 
     def _clear_hold_back_queue(self, sender_uuid: UUID):
-        tracker = self._received_tracker.get(sender_uuid)
+        tracker = self._received_tracker.get(sender_uuid.hex)
         next_msg = None
         for msg in self._hold_back_queue:
             if msg.sender_uuid != sender_uuid:
