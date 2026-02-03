@@ -1,75 +1,77 @@
 """This module contains classes for sending packets in different forms."""
 
-import socket
-from threading import Thread, Event
-import multiprocessing as mp
-from concurrent.futures import Future
 import json
-from dataclasses import asdict, is_dataclass
-import struct
+import multiprocessing as mp
 import queue
-from typing import Optional, Tuple, Callable, TypeVar, Type
-from enum import StrEnum
+import socket
+import struct
+from collections import deque
+from concurrent.futures import Future
+from threading import Thread, Event
+from typing import Optional, Callable, TypeVar, Type
+
+from shared.packet import Packet
 
 
-class PacketTag(StrEnum):
-    NONE = "none"
-    LOGIN = "login"
-    LOGOUT = "logout"
-    ATTACK = "attack"
-    PLAYER_GAME_STATE = "player_game_state"
-    STRING_MESSAGE = "string_message"
-    NEW_BOSS = "new_boss"
-    BOSS_DEAD = "boss_dead"
-    CLIENT_PING = "client_ping"
-    CLIENT_PONG = "client_pong"
-    SERVER_HELLO = "server_hello"
-    LOGIN_REPLY = "login_reply"
-
-    #Bully
-    BULLY_ELECTION = "election"
-    BULLY_OK = "ok"
-    BULLY_COORDINATOR = "coordinator"
-    BULLY_LEADER_HEARTBEAT = "leader_heartbeat"
-
-class Packet:
-    """Basic packet for client-server communication.
-    """
-
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, uuid: int = -1, length: int = 0):
-        """Content must be a dataclass"""
-        self.content = content
-        self.tag = tag
-        self.uuid = uuid
-        
-        self._length = length
-
-    def _to_dictionary(self) -> dict[str, object]:
-        if not is_dataclass(self.content):
-            raise TypeError("Could not encode packet. Packet content must be a dataclass.")
-        dictionary = dict()
-        dictionary['tag'] = self.tag.value
-        dictionary['uuid'] = self.uuid
-        dictionary['content'] = asdict(self.content)
-        return dictionary
-
-    def encode(self) -> bytes:
-        """Encodes a packet to a byte array ready to send. The returned bytes start with a 4 byte data length.
-        """
-        json_string = json.dumps(self._to_dictionary())
-        json_bytes = json_string.encode()
-
-        # prepend the data length as a 4-byte integer
-        data_length = struct.pack('!I', len(json_bytes))
-        return data_length + json_bytes
+class SocketUtils:
+    T = TypeVar('T')
 
     @classmethod
-    def decode(cls, data: bytes) -> 'Packet':
-        """Decodes a byte array into a packet ready to use. The content is kept as a dictionary.
+    def recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
+        """Receives exactly n bytes from the given connection. By default blocks until the data is received.
+        If a timeout is set and the data is not available, a timeout error is raised.
         """
-        data_length = int.from_bytes(data[0:4])
-        dictionary = json.loads(data[4:].decode())
-        return cls(dictionary['content'], PacketTag(dictionary["tag"]), int(dictionary["uuid"]), data_length, )
+        old_timeout = conn.gettimeout()
+        conn.settimeout(timeout_s)
+        data = b""
+        while len(data) < n_bytes:
+            chunk = conn.recv(n_bytes - len(data))
+            if not chunk:
+                conn.close()
+                raise ConnectionError("connection closed")
+            data += chunk
+        conn.settimeout(old_timeout)
+        return data
+
+    #Gossip
+    GOSSIP_PLAYER_STATS = "gossip_player_stats"
+    GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
+
+    @classmethod
+    def recv_packet(cls, sock: socket.socket) -> Packet:
+        """Blocks until a full packet is received from the socket.
+        """
+        length_bytes = cls.recv_exact(4, sock)
+        data_length = struct.unpack('!I', length_bytes)[0]
+        json_bytes = cls.recv_exact(data_length, sock)
+        packet = Packet.decode(length_bytes + json_bytes)
+        return packet
+
+    @staticmethod
+    def _get_local_ip() -> str:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Doesn't need to be reachable
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+
+    local_ip = _get_local_ip()
+
+
+    # TODO use this method everywhere where packets are being received. Also make Packet generic
+    @classmethod
+    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
+        """
+        Extracts the content of a packet and converts it to the specified type.
+        Returns None if the conversion fails.
+        """
+        try:
+            content = content_type(**packet.content)
+            return Packet(content=content, tag=packet.tag)
+        except TypeError:
+            return None
 
 
 class UDPSocket(Thread):
@@ -105,7 +107,8 @@ class BroadcastSocket(Thread):
             response_handler: Callable[[Packet, tuple[str, int]], None] = None,
             response_timeout_handler: Callable = None,
             broadcast_port: int = 10002,
-            timeout_s: float = 10.0
+            timeout_s: float = 10.0,
+            send_attempts: int = 1
     ):
         super().__init__()
         self.timeout_s = timeout_s
@@ -115,6 +118,7 @@ class BroadcastSocket(Thread):
         self.future: Future[Optional[Packet]] = Future()
         self.response_handler = response_handler
         self.response_timeout_handler = response_timeout_handler
+        self.send_attempts = send_attempts
 
     def run(self):
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -122,7 +126,8 @@ class BroadcastSocket(Thread):
             udp_socket.settimeout(self.timeout_s)
             udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
-            udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
+            for i in range(self.send_attempts):
+                udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
 
             try:
                 data, addr = udp_socket.recvfrom(4096)
@@ -154,11 +159,11 @@ class BroadcastListener(Thread):
     """A thread that listens to incoming broadcast messages. The object contained in these message can be handled by the on_message handler function."""
 
     def __init__(
-            self, 
-            port: int = 10002, 
+            self,
+            port: int = 10002,
             on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
             buffer_size: int = 65507,
-            uuid: int = -1
+            server_uuid: int = -1
     ):
         super().__init__(daemon=True)
 
@@ -167,25 +172,28 @@ class BroadcastListener(Thread):
         if not callable(on_message):
             raise TypeError("on_message must be callable.")
 
-        self.uuid = uuid
+        self.server_uuid = server_uuid
         self.port = port
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
         self._stop_event = Event()
+        self.latest_uuids = deque(["" for _ in range(100)])
+
+        self.port_queue = mp.Queue()
 
     def stop(self):
         self._stop_event.set()
 
     def run(self):
-        local_ip = self.get_local_ip()
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # alle interfaces
         sock.bind(("", self.port))
         # Timeout, damit recvfrom nicht unendlich blockiert
         sock.settimeout(5.0)
+
+        self.port_queue.put(sock.getsockname()[1])
         try:
             while not self._stop_event.is_set():
                 try:
@@ -203,11 +211,19 @@ class BroadcastListener(Thread):
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
-                
-                if self.uuid != -1 and self.uuid == content.uuid:
-                    # if uuid is provided then ignore msgs from myself
+
+
+                # if server_uuid is provided then ignore msgs by myself
+                if self.server_uuid != -1 and self.server_uuid == content.server_uuid:
+                        continue
+
+                # if packet uuid has been seen before lately, ignore
+                if content.packet_uuid in self.latest_uuids:
                     continue
-                
+                else:
+                    self.latest_uuids.appendleft(content.packet_uuid)
+                    self.latest_uuids.pop()
+
                 response_packet: Packet = self.on_message(content, addr)
                 if response_packet:
                     sock.sendto(response_packet.encode(), addr)
@@ -216,13 +232,9 @@ class BroadcastListener(Thread):
         finally:
             sock.close()
 
-    @staticmethod
-    def get_local_ip():
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Connect to a dummy address (8.8.8.8) to trigger the OS 
-            # to pick the correct outgoing interface. No data is actually sent.
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+    def get_port(self) -> int:
+        """Returns the port the server is listening on. Blocks until the port is available."""
+        return self.port_queue.get()
 
 
 class _TCPConnection:
@@ -231,9 +243,8 @@ class _TCPConnection:
     T = TypeVar('T')
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
-    def __init__(self, address: Tuple[str, int], recv_queue: mp.Queue):
+    def __init__(self, recv_queue: mp.Queue):
         super().__init__()
-        self.address = address
 
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
@@ -243,32 +254,6 @@ class _TCPConnection:
 
 
         self.socket: Optional[socket.socket] = None
-
-    @classmethod
-    def _recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
-        old_timeout = conn.gettimeout()
-        conn.settimeout(timeout_s)
-        data = b""
-        while len(data) < n_bytes:
-            chunk = conn.recv(n_bytes - len(data))
-            if not chunk:
-                conn.close()
-                raise ConnectionError("connection closed")
-            data += chunk
-        conn.settimeout(old_timeout)
-        return data
-
-    @classmethod
-    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
-        """
-        Extracts the content of a packet and converts it to the specified type.
-        Returns None if the conversion fails.
-        """
-        try:
-            content = content_type(**packet.content)
-            return Packet(content=content, tag=packet.tag)
-        except TypeError:
-            return None
 
     def send(self, packet: Packet):
         """Provides a packet to be sent as soon as possible."""
@@ -300,16 +285,6 @@ class _TCPConnection:
             except OSError:
                 pass
 
-
-    def _recv_packet(self, sock: socket.socket) -> Packet:
-        """Blocks until a full packet is received from the socket.
-        """
-        length_bytes = self._recv_exact(4, sock)
-        data_length = struct.unpack('!I', length_bytes)[0]
-        json_bytes = self._recv_exact(data_length, sock)
-        packet = Packet.decode(length_bytes + json_bytes)
-        return packet
-
     def _send_queued_packets(self, conn: socket.socket):
         try:
             while True:
@@ -331,7 +306,7 @@ class _TCPConnection:
     def receiver(self, conn: socket.socket):
         while not self._stop_event.is_set():
             try:
-                packet = self._recv_packet(conn)
+                packet = SocketUtils.recv_packet(conn)
                 self._handle_packet(packet)
             except (ConnectionError, OSError):
                 try:
@@ -350,11 +325,13 @@ class TCPClientConnection(_TCPConnection, Thread):
 
     T = TypeVar('T')
 
-    def __init__(self, address: Tuple[str, int]):
+    def __init__(self, address: tuple[str, int]):
         """
         Initializes a TCP client which connects to the specified address.
         """
-        super().__init__(address, queue.Queue())
+        super().__init__(queue.Queue())
+
+        self.address = address
 
     def run(self):
         # Establish connection
@@ -383,16 +360,16 @@ class TCPClientConnection(_TCPConnection, Thread):
             self.socket.close()
 
 
-class TCPServerConnection(_TCPConnection, mp.Process):
+class TCPServerConnection(_TCPConnection, Thread):
     """A simple TCP server connection that accepts a single connection and can send and receive packets."""
 
-    def __init__(self, recv_queue: mp.Queue, address: Tuple[str, int] = ("", 0), backlog: int = 1):
+    def __init__(self, conn_socket: socket.socket, recv_queue: mp.Queue, backlog: int = 1):
         """
         Initializes a TCP server which listens on the specified address.
         """
-        super().__init__(address, recv_queue)
-        self.address = address
+        super().__init__(recv_queue)
         self.backlog = backlog
+        self.socket = conn_socket
 
         # Queue to communicate the actual port back to the parent process
         self.port_queue = mp.Queue()
@@ -402,29 +379,16 @@ class TCPServerConnection(_TCPConnection, mp.Process):
         return self.port_queue.get()
 
     def run(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # damit man nach crash direkt wieder benutzen kann
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind(self.address)
-
-        self.socket.listen(self.backlog)
 
         self.port_queue.put(self.socket.getsockname()[1])
 
-        # accept a single connection
-        self.socket.settimeout(None)
-        conn, client_address = self.socket.accept()
-        print("TCP connection established with ", client_address)
-
         # Start sender and receiver threads
-        sender = Thread(target=self.sender, args=(conn,),daemon=True)
-        receiver = Thread(target=self.receiver, args=(conn,),daemon=True)
+        sender = Thread(target=self.sender, args=(self.socket,),daemon=True)
+        receiver = Thread(target=self.receiver, args=(self.socket,),daemon=True)
 
         sender.start()
         receiver.start()
         sender.join()
         sender.join()
 
-        if conn is not None:
-            conn.close()
         self.socket.close()

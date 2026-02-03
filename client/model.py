@@ -1,19 +1,20 @@
-from shared.data import PlayerData, BossData, PlayerGameStateData
+from shared.data import PlayerData, PlayerGameStateData, MonsterData
+
 
 class ClientGameState:
     def __init__(self):
         self.player = Player()
-        self.boss = Boss()
+        self.monster = Monster()
         self.player_count = 0
 
     def update(self, game_state: PlayerGameStateData):
         self.player.update_state(game_state.player)
-        self.boss.update(game_state.boss)
+        self.monster.update(game_state.monster)
         self.player_count = game_state.player_count
     
-    def attack_boss(self):
+    def attack_monster(self):
         damage = self.player.damage
-        self.boss.receive_damage(damage)
+        self.monster.receive_damage(damage)
 
 
 class Player:
@@ -28,7 +29,7 @@ class Player:
         self.damage = game_state.damage
         self.level = game_state.level
 
-class Boss:
+class Monster:
     def __init__(self):
         self.name = ""
         self.stage = 0
@@ -39,13 +40,13 @@ class Boss:
         self.health -= damage
         if self.is_dead():
             self.health = 0
-            print("Boss defeated!")
+            print("Monster defeated!")
 
-    def update(self, boss_data: BossData):
-        self.name = boss_data.name
-        self.stage = boss_data.stage
-        self.health = boss_data.health
-        self.max_health = boss_data.max_health
+    def update(self, monster_data: MonsterData):
+        self.name = monster_data.name
+        self.stage = monster_data.stage
+        self.health = monster_data.health
+        self.max_health = monster_data.max_health
     
     def set_dead(self):
         self.health = 0

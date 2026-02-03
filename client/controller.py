@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from client.events import UIEventDispatcher, Events
 from model import ClientGameState
 from shared.data import *
-from shared.sockets import Packet, PacketTag, BroadcastSocket, TCPClientConnection
+from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
+from shared.packet import PacketTag, Packet
+from shared.utils import Debug
 
 
 class LoginService:
@@ -14,6 +17,7 @@ class LoginService:
     def __init__(self, game_controller: 'GameController'):
         self._game_controller = game_controller
         self._game_controller.dispatcher.subscribe(Events.LOGIN_CLICKED, self.login)
+        self._game_controller.dispatcher.subscribe(Events.SERVER_TIMEOUT, self.login)
 
     def login(self, username: str):
         """Sends a login broadcast and waits for a response to update the game state."""
@@ -23,63 +27,74 @@ class LoginService:
         packet = Packet(login_data, tag=PacketTag.LOGIN)
         login_broadcast = BroadcastSocket(packet, self._handle_login_response, self._handle_login_timeout)
         login_broadcast.start()
-        login_broadcast.join()
 
-    def _handle_login_response(self, packet: Packet, address: tuple[str, int]):
+    def _handle_login_response(self, packet: Packet, _address: tuple[str, int]):
         """Called when a login response is received. Updates the game state and starts a TCP connection with the responder."""
 
         if packet.tag == PacketTag.LOGIN_REPLY:
             try:
-                login_reply = LoginReplyData.from_dict(packet.content)
-                username = login_reply.game_state.player.username
-                self._game_controller.on_logged_in(username, address, login_reply)
+                login_reply = LoginReplyData(**packet.content)
+                self._game_controller.on_logged_in(login_reply)
             except TypeError as e:
                 print("Invalid game state received.", e)
     
     def _handle_login_timeout(self):
         print("Login failed. Server did not respond to login request.")
+        self._game_controller.dispatcher.emit(Events.LOGIN_FAILED)
 
 
 class ConnectionService(TCPClientConnection):
     """Connection service that composes a TCPClientConnection and processes incoming packets."""
+
+    SERVER_TIMEOUT = 10.0
 
     def __init__(self, address: tuple[str, int], username: str, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
         super().__init__(address)
         self.dispatcher = dispatcher
         self._client_game_state = client_game_state
         self._username: str = username
+        self.server_timeout_timer: Optional[threading.Timer] = None
+        self._restart_server_timer()
 
     def _handle_packet(self, packet: Packet):
         try:
-            # handle the same tags as before
-            if packet.tag == PacketTag.CLIENT_PING:
-                pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
-                self.send(pong)
-                return
+            match packet.tag:
+                case PacketTag.LOGIN_CONFIRM:
+                    game_state = PlayerGameStateData.from_dict(packet.content)
+                    self._client_game_state.update(game_state)
+                    print(f"You are now logged in as {self._username}")
+                    self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
+                    self._restart_server_timer()
 
-            if packet.tag == PacketTag.CLIENT_PONG:
-                return
+                # handle the same tags as before
+                case PacketTag.CLIENT_PING:
+                    pong = Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)
+                    self.send(pong)
 
-            if packet.tag == PacketTag.PLAYER_GAME_STATE:
-                game_state = PlayerGameStateData.from_dict(packet.content)
-                self._client_game_state.update(game_state)
-                self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
-                return
+                case PacketTag.CLIENT_PONG:
+                    Debug.log("Pong received", "CLIENT")
 
-            if packet.tag == PacketTag.NEW_BOSS:
-                typed_packet = TCPClientConnection.get_typed_packet(packet, BossData)
-                if typed_packet:
-                    print("New boss received:", typed_packet.content)
-                    self._client_game_state.boss.update(typed_packet.content)
-                    self.dispatcher.emit(Events.NEW_BOSS, self._client_game_state)
-                return
+                case PacketTag.PLAYER_GAME_STATE:
+                    game_state = PlayerGameStateData.from_dict(packet.content)
+                    self._client_game_state.update(game_state)
+                    self.dispatcher.emit(Events.UPDATE_GAME_STATE, self._client_game_state, game_state.latest_damages)
 
-            if packet.tag == PacketTag.BOSS_DEAD:
-                # assume content is a simple string
-                self._client_game_state.boss.set_dead()
-                return
+                case PacketTag.NEW_MONSTER:
+                    typed_packet = SocketUtils.get_typed_packet(packet, MonsterData)
+                    if typed_packet:
+                        print("New monster received:", typed_packet.content)
+                        self._client_game_state.monster.update(typed_packet.content)
+                        self.dispatcher.emit(Events.NEW_MONSTER, self._client_game_state)
 
-            print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+                case PacketTag.MONSTER_DEAD:
+                    # assume content is a simple string
+                    self._client_game_state.monster.set_dead()
+
+                case _:
+                    print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
+                    return
+
+            self._restart_server_timer()
 
         except Exception as e:
             print("Error handling packet:", e)
@@ -93,6 +108,7 @@ class ConnectionService(TCPClientConnection):
         logout_data = LoginData(self._username)
         packet = Packet(logout_data, tag=PacketTag.LOGOUT)
         self.send(packet)
+        self.server_timeout_timer.cancel()
         print("You are logged out now.")
 
     def send_logout_now(self):
@@ -106,6 +122,20 @@ class ConnectionService(TCPClientConnection):
         except OSError as e:
             print("Could not send logout:", e)
 
+    def _restart_server_timer(self):
+        if self.server_timeout_timer:
+            self.server_timeout_timer.cancel()
+        self.server_timeout_timer = threading.Timer(self.SERVER_TIMEOUT, self._on_server_timeout_detected)
+        self.server_timeout_timer.start()
+
+    def _on_server_timeout_detected(self):
+        if self.is_alive():
+            Debug.log("Server inactivity detected. Trying to log in again.", "CLIENT")
+            self.dispatcher.emit(Events.SERVER_TIMEOUT, self._username)
+        else:
+            Debug.log("Login failed.")
+            self.dispatcher.emit(Events.LOGIN_FAILED)
+
 
 class GameController:
     def __init__(self, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
@@ -116,24 +146,28 @@ class GameController:
         self.dispatcher.subscribe(Events.ATTACK_CLICKED, self.on_attack_clicked)
         self.dispatcher.subscribe(Events.LOGOUT_CLICKED, self.on_logout_clicked)
 
-    def on_logged_in(self, username: str, address: tuple[str, int], login_reply: LoginReplyData):
+    def on_logged_in(self, login_reply: LoginReplyData):
         if self._connection_service:
             self._connection_service.stop()
-        print(f"You are now logged in as {username}")
 
-        connect_to_address = (address[0], login_reply.server_port)
-        self._connection_service = ConnectionService(connect_to_address, username, self.client_game_state, self.dispatcher)
+        print(f"The server {login_reply.server_ip}:{login_reply.server_port} has been assigned to you.")
+
+        # start new connection service
+        connect_to_address = (login_reply.server_ip, login_reply.server_port)
+        self._connection_service = ConnectionService(connect_to_address, login_reply.username, self.client_game_state, self.dispatcher)
         self._connection_service.start()
-        self.client_game_state.update(login_reply.game_state)
-        self.dispatcher.emit(Events.LOGGED_IN, self.client_game_state)
+
+        # send login packet to the assigned server
+        login_packet = Packet(LoginData(login_reply.username), tag=PacketTag.LOGIN)
+        self._connection_service.send(login_packet)
 
 
     def on_attack_clicked(self):
         """Callback for when the attack button is clicked."""
-        self.client_game_state.attack_boss()
+        self.client_game_state.attack_monster()
         self._connection_service.send_attack()
         self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, [])
-        return self.client_game_state.boss
+        return self.client_game_state.monster
 
     def on_logout_clicked(self):
         if self._connection_service:
