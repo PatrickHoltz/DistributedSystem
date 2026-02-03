@@ -50,7 +50,7 @@ class ServerLoop:
         self._is_stopped = False
         self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.out_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
-        self.tick_rate = 0.1  # ticks per second
+        self.tick_rate = 0.2  # seconds between ticks
 
         self.leader_info: ServerInfo | None = None
         self.is_leader: bool = False
@@ -91,6 +91,9 @@ class ServerLoop:
         self._restart_leader_heartbeat_timer()
 
         while not self._is_stopped:
+            Debug.log("SERVER LOOP")
+            start_time = time.time()
+
             now = time.monotonic()
 
             self._filter_server_view()
@@ -114,14 +117,14 @@ class ServerLoop:
 
             self._update_game_states()
             self._send_outgoing_messages()
-            
+
             # multicast aggregated damage to other servers
             self.damage_multicaster.cast_msg(json.dumps({"damage": self.game_state_manager.latest_damage}))
             self.game_state_manager.latest_damage = 0
-            
+
             # self.connection_manager.tick_client_heartbeat(now)
 
-            time.sleep(self.tick_rate)
+            time.sleep(max(0, self.tick_rate - (time.time() - start_time)))
 
     def handle_gossip_message(self, packet: Packet, address: tuple[str, int]):
         match packet.tag:

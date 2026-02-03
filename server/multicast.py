@@ -179,7 +179,7 @@ class Multicast:
     GROUP = '224.0.0.1'
     PORT = 5007
 
-    DEBUG = True
+    DEBUG = False
 
     uuid: UUID
     on_msg_handler: Callable[[str], None]

@@ -164,9 +164,9 @@ class GameController:
 
     def on_attack_clicked(self):
         """Callback for when the attack button is clicked."""
-        self.client_game_state.attack_monster()
+        damage = self.client_game_state.attack_monster()
         self._connection_service.send_attack()
-        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, [])
+        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, []) # TODO [damage]
         return self.client_game_state.monster
 
     def on_logout_clicked(self):

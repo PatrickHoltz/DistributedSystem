@@ -11,11 +11,11 @@ class ClientGameState:
         self.player.update_state(game_state.player)
         self.monster.update(game_state.monster)
         self.player_count = game_state.player_count
-    
-    def attack_monster(self):
+
+    def attack_monster(self) -> int:
         damage = self.player.damage
         self.monster.receive_damage(damage)
-
+        return damage
 
 class Player:
     def __init__(self):
@@ -32,7 +32,7 @@ class Player:
 class Monster:
     def __init__(self):
         self.name = ""
-        self.stage = 0
+        self.stage = -1
         self.health = 0
         self.max_health = 0
 
@@ -43,11 +43,14 @@ class Monster:
             print("Monster defeated!")
 
     def update(self, monster_data: MonsterData):
-        self.name = monster_data.name
-        self.stage = monster_data.stage
-        self.health = monster_data.health
-        self.max_health = monster_data.max_health
-    
+        if self.stage < monster_data.stage:
+            self.name = monster_data.name
+            self.stage = monster_data.stage
+            self.health = monster_data.health
+            self.max_health = monster_data.max_health
+        else:
+            self.health = min(self.health, monster_data.health)
+
     def set_dead(self):
         self.health = 0
 
