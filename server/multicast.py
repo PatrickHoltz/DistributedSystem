@@ -6,6 +6,7 @@ import struct
 from dataclasses import dataclass
 from logging import warning
 from threading import Thread, Lock
+from typing import Callable
 from uuid import UUID
 
 @dataclass
@@ -181,6 +182,7 @@ class Multicast:
     DEBUG = True
 
     uuid: UUID
+    on_msg_handler: Callable[[str], None]
 
     _sender: MulticastSender
     _receiver: MulticastReceiver
@@ -192,8 +194,9 @@ class Multicast:
     _hold_back_queue: list[MulticastMessagePacket]
     _received_msgs: dict[tuple[UUID, int], MulticastMessagePacket]
 
-    def __init__(self, uuid) -> None:
+    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None]) -> None:
         self.uuid = uuid
+        self.on_msg_handler = on_msg_handler
 
         self._sequence_number = 0
         self._received_tracker = {}
@@ -282,6 +285,12 @@ class Multicast:
     def _reliable_deliver(self, msg: MulticastMessagePacket) -> None:
         if self.DEBUG:
             print(f"Deliver: {msg.sequence_id} > {msg.content}")
+
+        data = json.loads(msg.content)
+        if msg.sender_uuid == self.uuid:
+            return # ignore messages from myself
+
+        self.on_msg_handler(data['content'])
 
     def _clear_hold_back_queue(self, sender_uuid: UUID):
         tracker = self._received_tracker.get(sender_uuid.hex)

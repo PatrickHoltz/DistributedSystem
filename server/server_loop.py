@@ -1,14 +1,16 @@
 import multiprocessing as mp
 import threading
 import time
-from collections.abc import Callable
+import json
+import random
+
 from threading import Lock, Timer
 from typing import Optional
-import random
 
 from uuid import UUID, uuid4
 from threading import Lock, Timer
 
+from multicast import Multicast
 from server_logic import ConnectionManager, GameStateManager
 from shared.data import *
 from shared.packet import PacketTag, Packet
@@ -78,6 +80,8 @@ class ServerLoop:
         self.bully_listener = BroadcastListener(on_message=self.handle_leader_message,
                                                 server_uuid=UUID(self.server_uuid).int)
         self.bully_listener.start()
+        
+        self.damage_multicaster = Multicast(UUID(self.server_uuid), self._on_damage_multicast)
 
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
@@ -110,7 +114,11 @@ class ServerLoop:
 
             self._update_game_states()
             self._send_outgoing_messages()
-
+            
+            # multicast aggregated damage to other servers
+            self.damage_multicaster.cast_msg(json.dumps({"damage": self.game_state_manager.latest_damage}))
+            self.game_state_manager.latest_damage = 0
+            
             # self.connection_manager.tick_client_heartbeat(now)
 
             time.sleep(self.tick_rate)
@@ -154,19 +162,19 @@ class ServerLoop:
 
                     if monster_changed:
                         self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
-                        pass
+                        
                 return None
 
-            case PacketTag.ATTACK:
-                if not self.is_leader:
-                    return None
-
-                damage = packet.content.get("damage")
-                if damage and isinstance(damage, (int, float)) and damage > 0:
-                    with self._gossip_lock:
-                        monster = self.game_state_manager.get_monster()
-                        self.game_state_manager.set_monster_health(monster.health - int(damage))
-                return None
+            #case PacketTag.ATTACK:
+            #    if not self.is_leader:
+            #        return None
+            #
+            #    damage = packet.content.get("damage")
+            #    if damage and isinstance(damage, (int, float)) and damage > 0:
+            #        with self._gossip_lock:
+            #            monster = self.game_state_manager.get_monster()
+            #            self.game_state_manager.set_monster_health(monster.health - int(damage))
+            #    return None
 
             case _:
                 return None
@@ -203,6 +211,12 @@ class ServerLoop:
             new_monster = self.game_state_manager.get_monster()
             self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
             self._broadcast_monster_sync()
+
+    def _on_damage_multicast(self, msg: str):
+        data = json.loads(msg)
+        damage = data['damage']
+        if damage and damage > 0:
+            self.game_state_manager.apply_attack_from_other_server(damage)
 
     def stop(self):
         self._is_stopped = True
@@ -246,15 +260,12 @@ class ServerLoop:
 
                 case PacketTag.ATTACK:
                     damage = self.game_state_manager.apply_attack(username)
-                    if damage > 0:
-                        if self.is_leader:
-                            with self._gossip_lock:
-                                monster = self.game_state_manager.get_monster()
-                                self.game_state_manager.set_monster_health(monster.health - int(damage))
-                        else:
-                            pkt = Packet({"damage": damage}, tag=PacketTag.ATTACK,
-                                         server_uuid=UUID(self.server_uuid).int)
-                            BroadcastSocket(pkt, timeout_s=0.15, send_attempts=2).start()
+                    
+                    #if damage > 0:
+                    #    if self.is_leader:
+                    #        with self._gossip_lock:
+                    #            monster = self.game_state_manager.get_monster()
+                    #            self.game_state_manager.set_monster_health(monster.health - int(damage))
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
