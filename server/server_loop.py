@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 from threading import Lock, Timer
 
-from multicast import Multicast
+from multicast import Multicaster
 from server_logic import ConnectionManager, GameStateManager
 from shared.data import *
 from shared.packet import PacketTag, Packet
@@ -80,8 +80,8 @@ class ServerLoop:
         self.bully_listener = BroadcastListener(on_message=self.handle_leader_message,
                                                 server_uuid=UUID(self.server_uuid).int)
         self.bully_listener.start()
-        
-        self.damage_multicaster = Multicast(UUID(self.server_uuid), self._on_damage_multicast)
+
+        self.damage_multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
 
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
@@ -91,7 +91,6 @@ class ServerLoop:
         self._restart_leader_heartbeat_timer()
 
         while not self._is_stopped:
-            Debug.log("SERVER LOOP")
             start_time = time.time()
 
             now = time.monotonic()

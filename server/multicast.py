@@ -1,5 +1,6 @@
 """Provides everything needed for multicasting messages"""
 import json
+from multiprocessing import Process, Queue
 import socket
 import struct
 
@@ -173,16 +174,16 @@ class MulticastSender(Thread):
         with self.lock:
             self.msg_queue.append(msg)
 
-class Multicast:
-    """Class for sending and receiving reliably ordered (FIFO) multicasts"""
-
-    GROUP = '224.0.0.1'
+class MulticasterProcess(Process):
+    """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
-
     DEBUG = False
 
+    group: str
     uuid: UUID
-    on_msg_handler: Callable[[str], None]
+
+    in_queue: Queue
+    out_queue: Queue
 
     _sender: MulticastSender
     _receiver: MulticastReceiver
@@ -194,27 +195,32 @@ class Multicast:
     _hold_back_queue: list[MulticastMessagePacket]
     _received_msgs: dict[tuple[UUID, int], MulticastMessagePacket]
 
-    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None]) -> None:
+    def __init__(self, group: str, uuid: UUID) -> None:
+        super().__init__(daemon=False, name=f"Multicaster ({group})")
+
+        self.group = group
         self.uuid = uuid
-        self.on_msg_handler = on_msg_handler
+
+        self.in_queue = Queue()
+        self.out_queue = Queue()
 
         self._sequence_number = 0
         self._received_tracker = {}
         self._hold_back_queue = []
         self._received_msgs = {}
 
-        self._sender = MulticastSender(self.GROUP, self.PORT)
-        self._receiver = MulticastReceiver(self.GROUP, self.PORT)
+    def run(self) -> None:
+        self._sender = MulticastSender(self.group, self.PORT)
+        self._receiver = MulticastReceiver(self.group, self.PORT)
+        self._receive_handler = Thread(target=self._receive_loop, args=())
 
         self._sender.start()
         self._receiver.start()
-
-        self._receive_handler = Thread(target=self._receive_loop, args=())
         self._receive_handler.start()
 
-    def cast_msg(self, msg: str) -> None:
-        """Multicast the provided msg"""
-        self._reliable_multicast(msg)
+        while True:
+            msg_str = self.in_queue.get()
+            self._reliable_multicast(msg_str)
 
     def _receive_loop(self):
         while True:
@@ -290,7 +296,8 @@ class Multicast:
         if msg.sender_uuid == self.uuid:
             return # ignore messages from myself
 
-        self.on_msg_handler(data['content'])
+        msg_str = data['content']
+        self.out_queue.put_nowait(msg_str)
 
     def _clear_hold_back_queue(self, sender_uuid: UUID):
         tracker = self._received_tracker.get(sender_uuid.hex)
@@ -306,3 +313,27 @@ class Multicast:
         if next_msg is not None:
             self._hold_back_queue.remove(next_msg)
             self._on_receive(next_msg)
+
+class Multicaster:
+    """Class for sending and receiving reliably ordered (FIFO) multicasts"""
+    on_msg_handler: Callable[[str], None]
+
+    _multicaster_process: MulticasterProcess
+
+    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '224.0.0.1') -> None:
+        self._multicaster_process = MulticasterProcess(group, uuid)
+        self.on_msg_handler = on_msg_handler
+
+        self._receive_handler = Thread(target=self._receive_loop, args=())
+
+        self._receive_handler.start()
+        self._multicaster_process.start()
+
+    def cast_msg(self, msg: str) -> None:
+        """Multicasts the message to the group"""
+        self._multicaster_process.in_queue.put_nowait(msg)
+
+    def _receive_loop(self) -> None:
+        while True:
+            msg_str = self._multicaster_process.out_queue.get()
+            self.on_msg_handler(msg_str)

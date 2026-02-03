@@ -1,6 +1,6 @@
 import random
 from uuid import uuid4
-from multicast import Multicast
+from multicast import Multicaster
 from server_loop import ServerLoop
 
 import time
@@ -9,7 +9,7 @@ if __name__ == '__main__':
     server_loop = ServerLoop()
 
 def test_multicast():
-    test = Multicast(uuid4())
+    test = Multicaster(uuid4())
     time.sleep(3)
     test.cast_msg("HELLO")
     time.sleep(3)
