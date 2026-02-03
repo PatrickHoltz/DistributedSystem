@@ -50,3 +50,4 @@
 - [ ] Unify sockets that have common attributes / methods
 - [ ] Switch Broadcast to Multicast (broadcast messages may not be sent to all processes)
 - [ ] Rethink using standard Bully (higher UUID joins -> triggers election) but current may be better
+- [ ] When leader timeouts and comes back after a time 
