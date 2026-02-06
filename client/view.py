@@ -108,6 +108,10 @@ class LoginPage(ctk.CTkFrame):
         self.login_button = ctk.CTkButton(center_frame, text="Login", command=self.login)
         self.login_button.pack()
 
+    def on_show(self):
+        """Called when LoginPage becomes visible."""
+        self.login_button.configure(state="normal")
+
     def login(self):
         username = self.username_input.get()
         self.login_button.configure(state="disabled")
