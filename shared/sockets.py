@@ -9,6 +9,8 @@ from collections import deque
 from concurrent.futures import Future
 from threading import Thread, Event
 from typing import Optional, Callable, TypeVar, Type
+import subprocess
+import ipaddress
 
 from shared.packet import Packet
 
@@ -59,6 +61,38 @@ class SocketUtils:
 
     local_ip = _get_local_ip()
 
+    @staticmethod
+    def get_broadcast_addr() -> str:
+
+        cmd = [
+            "wmic",
+            "nicconfig",
+            "where",
+            "IPEnabled=true",
+            "get",
+            "IPAddress,IPSubnet",
+            "/format:csv"
+        ]
+
+        output = subprocess.check_output(cmd, text=True)
+
+        for line in output.splitlines():
+            if "," not in line or "Node" in line:
+                continue
+
+            _, ip_list, subnet_list = line.split(",", 2)
+
+            # IPAddress and IPSubnet are arrays like: {192.168.1.23}
+            ip = ip_list.strip("{}").split(';')[0]
+            mask = subnet_list.strip("{}").split(';')[0]
+
+            iface = ipaddress.ip_interface(f"{ip}/{mask}")
+
+            #print("IP:", ip)
+            #print("Broadcast:", iface.network.broadcast_address)
+            return str(iface.network.broadcast_address)
+        raise "Could not find broadcast address."
+
 
     # TODO use this method everywhere where packets are being received. Also make Packet generic
     @classmethod
@@ -99,7 +133,7 @@ class UDPSocket(Thread):
 class BroadcastSocket(Thread):
     """Broadcasts a single packet to the specified broadcast address using a new socket. A response can be obtained."""
 
-    BROADCAST_IP = "255.255.255.255"
+    BROADCAST_IP = SocketUtils.get_broadcast_addr()
 
     def __init__(
             self,
@@ -206,7 +240,7 @@ class BroadcastListener(Thread):
                     break
 
                 try:
-                    # print("Broadcast message received from ", addr)
+                    #print("Broadcast message received from ", addr)
                     content = Packet.decode(data)
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
