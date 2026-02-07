@@ -26,7 +26,7 @@ class GameStateManager:
     def __init__(self):
         self._game_state = GameStateData(players={}, monster=self._create_monster(1))
         self.latest_damage_numbers: list[int] = []
-        self.latest_damage = 0
+        self.overall_dmg = 0
 
     def touch_player(self, username: str):
         """Update last_seen_ts for TTL-online"""
@@ -96,14 +96,14 @@ class GameStateManager:
             damage = self._game_state.players[username].damage
             self._game_state.monster.health -= damage
             self.latest_damage_numbers.append(damage)
-            self.latest_damage += damage
+            self.overall_dmg += damage
             return damage
         return 0
 
-    def apply_attack_from_other_server(self, damage: int) -> None:
+    def apply_attacks(self, damage: int) -> None:
         """Applies the damage registered on another server and send via multicast"""
-        self._game_state.monster.health -= damage
-        self.latest_damage_numbers.append(damage)
+        self._game_state.monster.health = self._game_state.monster.max_health - damage
+        #self.latest_damage_numbers.append(damage)
 
     def _advance_monster_stage(self):
         new_stage = self._game_state.monster.stage + 1
@@ -158,6 +158,7 @@ class GameStateManager:
 
     def get_monster(self) -> MonsterData:
         return self._game_state.monster
+
     def get_online_player_count(self) -> int:
         self._refresh_online_flags()
         online_players = [p for p in self._game_state.players.values() if p.online]

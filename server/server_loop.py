@@ -82,6 +82,7 @@ class ServerLoop:
         self.bully_listener.start()
 
         self.damage_multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
+        self.damage_tracker = {}
 
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
@@ -118,8 +119,11 @@ class ServerLoop:
             self._send_outgoing_messages()
 
             # multicast aggregated damage to other servers
-            self.damage_multicaster.cast_msg(json.dumps({"damage": self.game_state_manager.latest_damage}))
-            self.game_state_manager.latest_damage = 0
+            self.damage_multicaster.cast_msg(json.dumps({
+                "uuid": self.server_uuid,
+                "stage": self.game_state_manager.get_monster().stage,
+                "damage": self.game_state_manager.overall_dmg,
+            }))
 
             # self.connection_manager.tick_client_heartbeat(now)
 
@@ -216,9 +220,23 @@ class ServerLoop:
 
     def _on_damage_multicast(self, msg: str):
         data = json.loads(msg)
+        uuid = data['uuid']
         damage = data['damage']
-        if damage and damage > 0:
-            self.game_state_manager.apply_attack_from_other_server(damage)
+        stage = data['stage']
+        
+        if not stage or stage != self.game_state_manager.get_monster().stage:
+            return
+
+        dif = damage - self.damage_tracker[uuid] if uuid in self.damage_tracker else damage
+        
+        if dif > 0:
+            #self.game_state_manager.apply_attack_from_other_server(dif)
+            self.damage_tracker[uuid] = damage
+            
+            dmg_sum = 0
+            for _uuid, dmg in self.damage_tracker.items():
+                dmg_sum += dmg
+            self.game_state_manager.apply_attacks(dmg_sum)
 
     def stop(self):
         self._is_stopped = True
