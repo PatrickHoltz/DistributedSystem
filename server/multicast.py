@@ -1,14 +1,17 @@
 """Provides everything needed for multicasting messages"""
 import json
-from multiprocessing import Process, Queue
+import random
 import socket
 import struct
 
 from dataclasses import dataclass
 from logging import warning
+from multiprocessing import Process, Queue
 from threading import Thread, Lock
 from typing import Callable
 from uuid import UUID
+
+from shared.utils import Debug
 
 @dataclass
 class MulticastPacket:
@@ -177,7 +180,8 @@ class MulticastSender(Thread):
 class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
-    DEBUG = False
+    DEBUG = True
+    OMISSION_CHANCE = 0.5
 
     group: str
     uuid: UUID
@@ -228,9 +232,14 @@ class MulticasterProcess(Process):
                 msg = self._receiver.get()
                 if msg is None:
                     continue
+                
+                if random.random() > self.OMISSION_CHANCE:
+                    if self.DEBUG:
+                        Debug.log(f"Simulating package omission for {msg.type_id}", "MULTICASTER")
+                    return
 
                 if self.DEBUG:
-                    print("RECV: " + str(msg.type_id))
+                    Debug.log(f"Receiving package with type {msg.type_id}", "MULTICASTER")
 
                 match(msg.type_id):
                     case MulticastMessagePacket.TYPE_ID:
@@ -290,7 +299,7 @@ class MulticasterProcess(Process):
 
     def _reliable_deliver(self, msg: MulticastMessagePacket) -> None:
         if self.DEBUG:
-            print(f"Deliver: {msg.sequence_id} > {msg.content}")
+            Debug.log(f"Delivering package: {msg.sequence_id} > {msg.content}", "MULTICASTER")
 
         data = json.loads(msg.content)
         if msg.sender_uuid == self.uuid:
