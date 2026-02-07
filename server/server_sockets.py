@@ -101,7 +101,7 @@ class Heartbeat(Thread):
     If a target_ip is specified, the heartbeat is only sent to this address. Otherwise, it is broadcasted.
     """
 
-    BROADCAST_IP = SocketUtils.get_broadcast_addr()
+    BROADCAST_IP = SocketUtils.broadcast_ip()
 
     def __init__(self, packet_function: Callable[[], Packet], interval: float, target_ip: str = None, port: int = 10002, broadcast_attempts: int = 1):
         super().__init__(name="Heartbeat")

@@ -311,7 +311,7 @@ class ServerLoop:
             case PacketTag.BULLY_ELECTION:
                 candidate = packet.content["candidate_uuid"]
 
-                Debug.log(f"Received election candidate <{candidate}>", "SERVER", "BULLY")
+                Debug.log(f"Received election candidate <{candidate}> from {address}", "SERVER", "BULLY")
 
                 if gt(self.server_uuid, candidate):
                     # if I am the leader, leader election is finished
@@ -331,6 +331,7 @@ class ServerLoop:
                             tag=PacketTag.BULLY_OK,
                             server_uuid=UUID(self.server_uuid).int
                         )
+
                         return ok_packet
 
                         # DO NOT start a new election here
@@ -403,6 +404,8 @@ class ServerLoop:
 
             case PacketTag.BULLY_OK:
                 responder_uuid = packet.content["responder_uuid"]
+
+                Debug.log(f"Received bully OK from {responder_uuid}", "SERVER", "BULLY")
 
                 # filter messages to myself
                 if self.server_uuid == responder_uuid:

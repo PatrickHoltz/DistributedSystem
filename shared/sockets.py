@@ -1,5 +1,5 @@
 """This module contains classes for sending packets in different forms."""
-
+import dataclasses
 import json
 import multiprocessing as mp
 import queue
@@ -14,6 +14,7 @@ import ipaddress
 
 from shared.packet import Packet
 
+Address = tuple[str, int]
 
 class SocketUtils:
     T = TypeVar('T')
@@ -62,7 +63,7 @@ class SocketUtils:
     local_ip = _get_local_ip()
 
     @staticmethod
-    def get_broadcast_addr() -> str:
+    def _get_broadcast_addr() -> str:
 
         cmd = [
             "wmic",
@@ -93,6 +94,8 @@ class SocketUtils:
             return str(iface.network.broadcast_address)
         raise "Could not find broadcast address."
 
+    broadcast_ip = _get_broadcast_addr()
+
 
     # TODO use this method everywhere where packets are being received. Also make Packet generic
     @classmethod
@@ -108,32 +111,87 @@ class SocketUtils:
             return None
 
 
-class UDPSocket(Thread):
+class UDPSocket(mp.Process):
     """
-    Send data to a server via UDP.
+    Socket to unicast and broadcast UDP packets and receive unicast packets.
     """
 
-    def __init__(self, packet: Packet, server_address: str, server_port: int):
+    def __init__(self):
         super().__init__()
-        self.packet = packet
-        self.server_address = server_address
-        self.server_port = server_port
+        self._stop_event = mp.Event()
+        self.buffer_size: int = 65507
+
+        self._sender: Optional[Thread] = None
+        self._receiver: Optional[Thread] = None
+        self._socket: socket.socket = None
+
+        self._send_queue: mp.Queue[UDPSocket.AddressedPacket] = mp.Queue()
+        self._recv_queue: mp.Queue[UDPSocket.AddressedPacket] = mp.Queue()
+
+        self.port_queue: mp.Queue[int] = mp.Queue()
+
+    @dataclasses.dataclass
+    class AddressedPacket:
+        """Combines a packet with an address"""
+        packet: Packet
+        address: tuple[str, int]
+
 
     def run(self):
-        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # let OS decide port, therefore no broadcast can be received
+        self._socket.bind(("", 0))
 
-        print("Connecting to: ", (self.server_address, self.server_port))
-        udp_socket.connect((self.server_address, self.server_port))
+        assigned_port = self._socket.getsockname()[1]
+        self.port_queue.put(assigned_port)
 
-        udp_socket.sendall(self.packet.encode())
+        self._sender = Thread(target=self._send_loop)
+        self._receiver = Thread(target=self._recv_loop)
+        self._sender.start()
+        self._receiver.start()
 
-        udp_socket.close()
+
+        self._sender.join()
+        self._socket.close()
+
+    def _send_loop(self):
+        while not self._stop_event.is_set():
+            next_packet = self._send_queue.get()
+            try:
+                self._socket.sendto(next_packet.packet.encode(), next_packet.address)
+            except OSError:
+                continue
+
+    def _recv_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                data, addr = self._socket.recvfrom(self.buffer_size)
+            except OSError:
+                continue
+            packet = Packet.decode(data)
+            self._handle_packet(packet, addr)
+
+
+    def stop(self):
+        self._stop_event.set()
+
+    def send_to(self, packet: Packet, addr: tuple[str, int]):
+        addr_packet = UDPSocket.AddressedPacket(packet, addr)
+        self._send_queue.put(addr_packet)
+
+    def broadcast(self, packet: Packet, port = 10002):
+        addr_packet = UDPSocket.AddressedPacket(packet, (SocketUtils.broadcast_ip, port))
+        self._send_queue.put(addr_packet)
+
+    def _handle_packet(self, packet: Packet, addr: tuple[str, int]):
+        raise NotImplementedError("Subclasses must implement _handle_packet method.")
 
 
 class BroadcastSocket(Thread):
     """Broadcasts a single packet to the specified broadcast address using a new socket. A response can be obtained."""
 
-    BROADCAST_IP = SocketUtils.get_broadcast_addr()
+    BROADCAST_IP = SocketUtils._get_broadcast_addr()
 
     def __init__(
             self,
