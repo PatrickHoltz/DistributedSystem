@@ -4,22 +4,22 @@ import json
 import multiprocessing as mp
 import socket
 import time
-from threading import Thread
+from threading import Thread, Event
 from typing import TYPE_CHECKING, Callable, Optional, override
 
 from shared.data import *
 from shared.packet import PacketTag, Packet
-from shared.sockets import _TCPConnection, SocketUtils, UDPSocket, Address, AddressedPacket
+from shared.sockets import TCPConnection, SocketUtils, UDPSocket, Address, AddressedPacket
 from shared.utils import Debug
 
 if TYPE_CHECKING:
     from server_logic import ConnectionManager
 
-class TCPListener(_TCPConnection, Thread):
+class TCPListener(TCPConnection, Thread):
     """A socket which accepts incoming tcp connections if they deliver a login packet with them."""
 
-    def __init__(self, connection_manager: ConnectionManager):
-        super().__init__(mp.Queue())
+    def __init__(self, connection_manager: ConnectionManager, stop_event):
+        super().__init__(mp.Queue(), stop_event=stop_event)
 
         # Queue to communicate the actual port back to the parent process
         self._connection_manager = connection_manager
@@ -31,17 +31,23 @@ class TCPListener(_TCPConnection, Thread):
 
         # set a high backlog so that no login request gets lost
         self.socket.listen(50)
+        self.socket.settimeout(2.0)
 
         self.port_queue.put(self.socket.getsockname()[1])
 
-        while True:
-            client_sock, client_addr = self.socket.accept()
+        while not self._stop_event.is_set():
+            try:
+                client_sock, client_addr = self.socket.accept()
+            except socket.timeout:
+                continue
 
             packet = SocketUtils.recv_packet(client_sock)
 
             if packet.tag == PacketTag.LOGIN:
                 login_data = LoginData(**packet.content)
                 self._connection_manager.add_connection(login_data.username, client_sock)
+
+        Debug.log("TCP listener stopped.")
 
 
     def get_port(self) -> int:
@@ -55,13 +61,12 @@ class ServerUDPSocket(Thread):
     Use methods from the udp_socket field to send packets.
     """
 
-    def __init__(self, connection_manager: ConnectionManager):
+    def __init__(self, connection_manager: ConnectionManager, stop_event = mp.Event()):
         super().__init__()
         self._connection_manager = connection_manager
-        self.udp_socket: Optional[UDPSocket] = UDPSocket()
+        self.udp_socket: Optional[UDPSocket] = UDPSocket(stop_event)
 
     def run(self):
-        #self._udp_socket = UDPSocket()
         self.udp_socket.start()
 
         while True:
@@ -91,8 +96,9 @@ class ServerUDPSocket(Thread):
             self.udp_socket.send_queue.put((packet, addr))
 
 
-    def broadcast(self, packet: Packet, port = 10002, attempts = 1):
+    def broadcast(self, packet: Packet, attempts = 1, port = 10002):
         addr_packet: AddressedPacket = (packet, (SocketUtils.broadcast_ip, port))
+        #Debug.log(f"broadcasting to {addr_packet[1]}")
         for _ in range(attempts):
             self.udp_socket.send_queue.put(addr_packet)
 
@@ -139,7 +145,7 @@ class Heartbeat(Thread):
         while not self._stop_event.is_set():
             next_packet = self.packet_function()
             try:
-                #print(f"sending hb to {(self.target_ip, self.port)}")
+                print(f"sending hb to {(self.target_ip, self.port)}")
                 for _ in range(self.broadcast_attempts):
                     self.socket.sendto(next_packet.encode(), (self.target_ip, self.port))
 

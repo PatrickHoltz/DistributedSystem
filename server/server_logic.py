@@ -165,21 +165,26 @@ class ConnectionManager:
     def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
+        self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
+
+        self.server_view: dict[str, ServerState] = {}
 
         self.server_loop: ServerLoop = server_loop
 
         # handles incoming broadcasts
         self.broadcast_listener = BroadcastListener(
             on_message=self.handle_broadcast,
-            server_uuid=UUID(server_uuid).int)
+            server_uuid=UUID(server_uuid).int,
+            stop_event=server_loop.stop_event,
+        )
         self.broadcast_listener.start()
 
         # handles regular login requests to the assigned server
-        self.client_listener = TCPListener(self)
+        self.client_listener = TCPListener(self, server_loop.stop_event)
         self.client_listener.start()
 
         # handles incoming udp unicast packets and sends unicast / broadcast
-        self.udp_socket = ServerUDPSocket(self)
+        self.udp_socket = ServerUDPSocket(self, server_loop.stop_event)
         self.udp_socket.start()
 
         # wait until the listeners obtained the listener addresses
@@ -189,9 +194,6 @@ class ConnectionManager:
         self.server_info = ServerInfo(server_uuid, 0, SocketUtils.local_ip, self.udp_listen_port, self.tcp_listener_port)
         Debug.log(f"IP: {self.server_info.ip}, UDP port: {self.server_info.udp_port}, TCP port: {self.server_info.tcp_port}")
 
-        self._next_client_ping = time.monotonic() + self.CLIENT_HEARTBEAT_INTERVAL
-
-        self.server_view: dict[str, ServerState] = {}
 
     def _assign_client(self) -> ServerInfo:
         """Returns the server info of the server which is occupied least"""

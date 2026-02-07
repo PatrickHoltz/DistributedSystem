@@ -24,23 +24,23 @@ class ServerLoop:
     BULLY_HEARTBEAT_TIMEOUT = 4.0
     BULLY_ELECTION_OK_WAIT = 4.0
     BULLY_COORDINATOR_WAIT = 8.0
-    TAKEOVER_COOLDOWN = 1.0
+    TAKEOVER_COOLDOWN = 0
     _next_takeover_allowed = 0.0
 
     SERVER_HEARTBEAT_TIMEOUT = 4.0
 
     DEBUG = True
 
-    GOSSIP_PLAYER_STATS_INTERVAL = 0.50
-    GOSSIP_MONSTER_SYNC_INTERVAL = 0.35
+    GOSSIP_PLAYER_STATS_INTERVAL = 5.0
+    GOSSIP_MONSTER_SYNC_INTERVAL = 5.0
 
     def __init__(self):
         super().__init__()
 
         self.server_uuid = str(uuid4())
 
-        self.connection_manager = ConnectionManager(self, self.server_uuid)
         self.game_state_manager = GameStateManager()
+        self.stop_event = mp.Event()
 
         self._is_stopped = False
         self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
@@ -72,9 +72,9 @@ class ServerLoop:
         self.election_timer: Timer | None = None
         self.bully_heartbeat_timer: Timer | None = None
 
+        self.connection_manager = ConnectionManager(self, self.server_uuid)
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
-        self.run()
 
     def run(self):
         self._restart_leader_heartbeat_timer()
@@ -199,6 +199,10 @@ class ServerLoop:
 
     def stop(self):
         self._is_stopped = True
+        self.stop_event.set()
+        self.connection_manager.udp_socket.join()
+        if self._heartbeat:
+            self._heartbeat.stop()
 
     def _filter_server_view(self):
         """Filters outdated servers from the server view"""
@@ -278,6 +282,7 @@ class ServerLoop:
             self.bully_heartbeat_timer.cancel()
         self.bully_heartbeat_timer: Timer = Timer(self.BULLY_HEARTBEAT_TIMEOUT,
                                                   self._on_leader_heartbeat_timeout)
+        self.bully_heartbeat_timer.daemon = True
         self.bully_heartbeat_timer.start()
 
     def _try_start_election(self):
@@ -329,8 +334,11 @@ class ServerLoop:
             if self.election_timer:
                 self.election_timer.cancel()
 
-            self.coordinator_timer = threading.Timer(self.BULLY_COORDINATOR_WAIT, self.on_coordinator_timeout)
-            self.coordinator_timer.start()
+            if not (self.coordinator_timer and self.coordinator_timer.is_alive()):
+                self.coordinator_timer = threading.Timer(self.BULLY_COORDINATOR_WAIT, self.on_coordinator_timeout)
+                self.coordinator_timer.daemon = True
+                self.coordinator_timer.start()
+                Debug.log("Coordinator timer started")
 
     def _handle_bully_election_message(self, packet: Packet, address: Address):
         candidate = packet.content["candidate_uuid"]
@@ -338,26 +346,17 @@ class ServerLoop:
         Debug.log(f"Received election candidate <{candidate}> from {address}", "SERVER", "BULLY")
 
         if self.gt(self.server_uuid, candidate):
-            # if I am the leader, leader election is finished
-            if self.is_leader:
-                coord = Packet(
-                    self.leader_info,
-                    tag=PacketTag.BULLY_COORDINATOR,
-                    server_uuid=UUID(self.server_uuid).int
-                )
-                self.connection_manager.udp_socket.broadcast(coord, 3)
+            Debug.log("My UUID is larger than candidate > replying ok", "SERVER", "BULLY")
+            # to start leader selection simultaneously with sending ok back
+            ok_packet = Packet(
+                OkMessage(responder_uuid=self.server_uuid),
+                tag=PacketTag.BULLY_OK,
+                server_uuid=UUID(self.server_uuid).int
+            )
+            self.connection_manager.udp_socket.send_to(ok_packet, address)
 
-            else:
-                Debug.log("My UUID is larger than candidate > replying ok", "SERVER", "BULLY")
-                # to start leader selection simultaneously with sending ok back
-                ok_packet = Packet(
-                    OkMessage(responder_uuid=self.server_uuid),
-                    tag=PacketTag.BULLY_OK,
-                    server_uuid=UUID(self.server_uuid).int
-                )
-                self.connection_manager.udp_socket.send_to(ok_packet, address)
-
-                # DO NOT start a new election here
+            # DO NOT start a new election here
+            self._try_start_election()
 
         # I am the current leader and the incoming packet has a higher uuid => stepping down as leader
         elif self.is_leader:
@@ -371,8 +370,6 @@ class ServerLoop:
     def _handle_bully_coordinator_message(self, packet: Packet):
         leader_info = ServerInfo(**packet.content)
 
-        self._restart_leader_heartbeat_timer()
-
         # if gt(self.leader_uuid, leader_uuid):
         #    with self._election_lock:
         #        if self.election_in_progress:
@@ -384,6 +381,10 @@ class ServerLoop:
         if leader_info.server_uuid != self.server_uuid and self.gt(leader_info.server_uuid, self.server_uuid):
             if self.coordinator_timer:
                 self.coordinator_timer.cancel()
+
+            self._restart_leader_heartbeat_timer()
+
+            Debug.log(f"Coordinator message received by <{leader_info}>", "SERVER", "BULLY")
 
             self._accept_leader(leader_info)
 
@@ -403,8 +404,6 @@ class ServerLoop:
 
         #Debug.log(f"Received leader heartbeat from <{leader_info.server_uuid}>", "SERVER", "BULLY")
 
-        self._restart_leader_heartbeat_timer()
-
         # ignore weaker heartbeat
         if self.gt(self.server_uuid, leader_info.server_uuid):
             with self._election_lock:
@@ -414,11 +413,14 @@ class ServerLoop:
                     return
 
         # accept heartbeat
+        self._restart_leader_heartbeat_timer()
         if self.leader_info is None or self.leader_info.server_uuid != leader_info.server_uuid:
+            Debug.log(f"Received new leader heartbeat from <{leader_info.server_uuid}>", "SERVER", "BULLY")
             self._accept_leader(leader_info)
 
     def on_coordinator_timeout(self):
         """Timeout callback for when no coordinator message was received after a bully ok"""
+        Debug.log("Coordinator timeout. Restarting election.")
         self._try_start_election()
 
     def _accept_leader(self, leader_info: ServerInfo):
@@ -449,7 +451,6 @@ class ServerLoop:
 
         self._last_leader_seen = time.monotonic()
         self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
-        self._on_leader_changed()
 
         coord_packet = Packet(
             self.connection_manager.server_info,
@@ -459,6 +460,7 @@ class ServerLoop:
 
         Debug.log(f"No one answered > declaring myself leader", "SERVER", "BULLY")
         self.connection_manager.udp_socket.broadcast(coord_packet, 3)
+        self._on_leader_changed()
 
     def _start_election(self):
         """Starts the election"""
@@ -481,6 +483,7 @@ class ServerLoop:
         self.connection_manager.udp_socket.broadcast(election_packet, 3)
 
         self.election_timer = threading.Timer(self.BULLY_ELECTION_OK_WAIT, self._become_leader)
+        self.election_timer.daemon = True
         self.election_timer.start()
 
     def get_heartbeat_packet(self) -> Packet:

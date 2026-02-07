@@ -5,8 +5,10 @@ import multiprocessing as mp
 import queue
 import socket
 import struct
+import time
 from collections import deque
 from concurrent.futures import Future
+import signal
 from threading import Thread, Event
 from typing import Optional, Callable, TypeVar, Type
 import subprocess
@@ -118,9 +120,9 @@ class UDPSocket(mp.Process):
     Socket to unicast and broadcast UDP packets and receive unicast packets.
     """
 
-    def __init__(self):
+    def __init__(self, stop_event = mp.Event()):
         super().__init__()
-        self._stop_event = mp.Event()
+        self._stop_event = stop_event
         self.buffer_size: int = 65507
 
         self._sender: Optional[Thread] = None
@@ -137,29 +139,42 @@ class UDPSocket(mp.Process):
 
 
     def run(self):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         # let OS decide port, therefore no broadcast can be received
         self._socket.bind(("", 0))
+        self._socket.settimeout(2.0)
 
         assigned_port = self._socket.getsockname()[1]
         self.port_queue.put(assigned_port)
 
-        self._sender = Thread(target=self._send_loop)
-        self._receiver = Thread(target=self._recv_loop)
+        # wait until required fields are set up
+        time.sleep(1.0)
+
+        self._sender = Thread(target=self._send_loop, daemon=True)
+        self._receiver = Thread(target=self._recv_loop, daemon=True)
         self._sender.start()
         self._receiver.start()
 
-        self._sender.join()
+        self._stop_event.wait()
+
+        self._sender.join(timeout=5)
+        self._receiver.join(timeout=5)
+
         self._socket.close()
+        Debug.log("UDP socket stopped.")
 
     def _send_loop(self):
         while not self._stop_event.is_set():
-            next_packet = self.send_queue.get()
+            packet, addr = self.send_queue.get()
             try:
-                self._socket.sendto(next_packet[0].encode(), next_packet[1])
-            except OSError:
+                self._socket.sendto(packet.encode(), addr)
+            except OSError as e:
+                Debug.log(f"Could not send package. {str(e)}")
                 continue
+        Debug.log("Sender stopped.")
 
     def _recv_loop(self):
         while not self._stop_event.is_set():
@@ -175,9 +190,11 @@ class UDPSocket(mp.Process):
                     self.latest_uuids.pop()
 
                 self.recv_queue.put((packet, addr))
+            except socket.timeout:
+                continue
             except OSError:
                 continue
-
+        Debug.log("Receiver stopped.")
 
     def stop(self):
         self._stop_event.set()
@@ -250,7 +267,8 @@ class BroadcastListener(Thread):
             port: int = 10002,
             on_message: Callable[[Packet, Address], None] = None,
             buffer_size: int = 65507,
-            server_uuid: int = -1
+            server_uuid: int = -1,
+            stop_event = mp.Event()
     ):
         super().__init__(daemon=True)
 
@@ -264,7 +282,7 @@ class BroadcastListener(Thread):
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
-        self._stop_event = Event()
+        self._stop_event = stop_event
         self.latest_uuids = deque(["" for _ in range(100)])
 
         self.port_queue = mp.Queue()
@@ -314,27 +332,26 @@ class BroadcastListener(Thread):
 
         finally:
             sock.close()
+            Debug.log("Broadcast listener stopped.")
 
     def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
         return self.port_queue.get()
 
 
-class _TCPConnection:
+class TCPConnection:
     """An abstract TCP connection which can be used for both sending and receiving packets."""
 
     T = TypeVar('T')
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
-    def __init__(self, recv_queue: mp.Queue):
+    def __init__(self, recv_queue: mp.Queue, stop_event = mp.Event()):
         super().__init__()
 
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
 
-        self._stop_event = mp.Event()
-
-
+        self._stop_event = stop_event
 
         self.socket: Optional[socket.socket] = None
 
@@ -402,7 +419,7 @@ class _TCPConnection:
         raise NotImplementedError("Subclasses must implement _handle_packet method.")
 
 
-class TCPClientConnection(_TCPConnection, Thread):
+class TCPClientConnection(TCPConnection, Thread):
     """A simple TCP client connection that can send and receive packets.
     """
 
@@ -443,7 +460,7 @@ class TCPClientConnection(_TCPConnection, Thread):
             self.socket.close()
 
 
-class TCPServerConnection(_TCPConnection, Thread):
+class TCPServerConnection(TCPConnection, Thread):
     """A simple TCP server connection that accepts a single connection and can send and receive packets."""
 
     def __init__(self, conn_socket: socket.socket, recv_queue: mp.Queue, backlog: int = 1):
