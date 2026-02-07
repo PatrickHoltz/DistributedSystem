@@ -168,9 +168,11 @@ class UDPSocket(mp.Process):
 
     def _send_loop(self):
         while not self._stop_event.is_set():
-            packet, addr = self.send_queue.get()
             try:
+                packet, addr = self.send_queue.get(timeout=2.0)
                 self._socket.sendto(packet.encode(), addr)
+            except queue.Empty:
+                continue
             except OSError as e:
                 Debug.log(f"Could not send package. {str(e)}")
                 continue
@@ -193,7 +195,7 @@ class UDPSocket(mp.Process):
             except socket.timeout:
                 continue
             except OSError:
-                continue
+                break
         Debug.log("Receiver stopped.")
 
     def stop(self):

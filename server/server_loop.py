@@ -204,6 +204,13 @@ class ServerLoop:
         if self._heartbeat:
             self._heartbeat.stop()
 
+        if self.election_timer:
+            self.election_timer.cancel()
+        if self.coordinator_timer:
+            self.coordinator_timer.cancel()
+        if self.bully_heartbeat_timer:
+            self.bully_heartbeat_timer.cancel()
+
     def _filter_server_view(self):
         """Filters outdated servers from the server view"""
         old_len = len(self.connection_manager.server_view)
@@ -282,7 +289,6 @@ class ServerLoop:
             self.bully_heartbeat_timer.cancel()
         self.bully_heartbeat_timer: Timer = Timer(self.BULLY_HEARTBEAT_TIMEOUT,
                                                   self._on_leader_heartbeat_timeout)
-        self.bully_heartbeat_timer.daemon = True
         self.bully_heartbeat_timer.start()
 
     def _try_start_election(self):
@@ -336,7 +342,6 @@ class ServerLoop:
 
             if not (self.coordinator_timer and self.coordinator_timer.is_alive()):
                 self.coordinator_timer = threading.Timer(self.BULLY_COORDINATOR_WAIT, self.on_coordinator_timeout)
-                self.coordinator_timer.daemon = True
                 self.coordinator_timer.start()
                 Debug.log("Coordinator timer started")
 
@@ -483,7 +488,6 @@ class ServerLoop:
         self.connection_manager.udp_socket.broadcast(election_packet, 3)
 
         self.election_timer = threading.Timer(self.BULLY_ELECTION_OK_WAIT, self._become_leader)
-        self.election_timer.daemon = True
         self.election_timer.start()
 
     def get_heartbeat_packet(self) -> Packet:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 import multiprocessing as mp
+import queue
 import socket
 import time
-from threading import Thread, Event
+from threading import Thread
 from typing import TYPE_CHECKING, Callable, Optional, override
 
 from shared.data import *
@@ -62,16 +62,21 @@ class ServerUDPSocket(Thread):
     """
 
     def __init__(self, connection_manager: ConnectionManager, stop_event = mp.Event()):
-        super().__init__()
+        super().__init__(daemon=True)
         self._connection_manager = connection_manager
         self.udp_socket: Optional[UDPSocket] = UDPSocket(stop_event)
+        self.stop_event = stop_event
 
     def run(self):
         self.udp_socket.start()
 
-        while True:
-            packet, addr = self.udp_socket.recv_queue.get()
-            self._handle_packet(packet, addr)
+        while not self.stop_event.is_set():
+            try:
+                packet, addr = self.udp_socket.recv_queue.get(timeout=2.0)
+                self._handle_packet(packet, addr)
+            except queue.Empty:
+                continue
+        Debug.log("Server udp socket stopped.")
 
     def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
@@ -145,7 +150,7 @@ class Heartbeat(Thread):
         while not self._stop_event.is_set():
             next_packet = self.packet_function()
             try:
-                print(f"sending hb to {(self.target_ip, self.port)}")
+                #Debug.log(f"sending hb to {(self.target_ip, self.port)}")
                 for _ in range(self.broadcast_attempts):
                     self.socket.sendto(next_packet.encode(), (self.target_ip, self.port))
 

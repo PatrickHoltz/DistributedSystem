@@ -126,7 +126,6 @@ class ConnectionService(TCPClientConnection):
         if self.server_timeout_timer:
             self.server_timeout_timer.cancel()
         self.server_timeout_timer = threading.Timer(self.SERVER_TIMEOUT, self._on_server_timeout_detected)
-        self.server_timeout_timer.daemon = True
         self.server_timeout_timer.start()
 
     def _on_server_timeout_detected(self):
