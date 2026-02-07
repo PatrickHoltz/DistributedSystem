@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 from typing import override
 from uuid import UUID
 
-from server.server_sockets import TCPListener, UDPListener
+from server.server_sockets import TCPListener, ServerUDPSocket
 from shared.data import *
 from shared.packet import PacketTag, Packet
-from shared.sockets import BroadcastListener, TCPServerConnection, SocketUtils
+from shared.sockets import BroadcastListener, TCPServerConnection, SocketUtils, Address
 from shared.utils import Debug
 
 if TYPE_CHECKING:
@@ -168,7 +168,7 @@ class ConnectionManager:
 
         self.server_loop: ServerLoop = server_loop
 
-        # handles login requests to the leader
+        # handles incoming broadcasts
         self.broadcast_listener = BroadcastListener(
             on_message=self.handle_broadcast,
             server_uuid=UUID(server_uuid).int)
@@ -178,12 +178,12 @@ class ConnectionManager:
         self.client_listener = TCPListener(self)
         self.client_listener.start()
 
-        # handles incoming udp packets
-        self.udp_listener = UDPListener(self)
-        self.udp_listener.start()
+        # handles incoming udp unicast packets and sends unicast / broadcast
+        self.udp_socket = ServerUDPSocket(self)
+        self.udp_socket.start()
 
         # wait until the listeners obtained the listener addresses
-        self.udp_listen_port = self.udp_listener.get_port()
+        self.udp_listen_port = self.udp_socket.get_port()
         self.tcp_listener_port = self.client_listener.get_port()
 
         self.server_info = ServerInfo(server_uuid, 0, SocketUtils.local_ip, self.udp_listen_port, self.tcp_listener_port)
@@ -258,29 +258,32 @@ class ConnectionManager:
             print(f"Heartbeat timeout: {username}")
             self.remove_connection(username)
 
-    def handle_broadcast(self, packet: Packet, _address: tuple[str, int]):
+    def handle_broadcast(self, packet: Packet, address: Address) -> None:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
+        match packet.tag:
+            case PacketTag.GOSSIP_PLAYER_STATS | PacketTag.GOSSIP_MONSTER_SYNC:
+                self.server_loop.handle_gossip_message(packet, address)
+            case PacketTag.LOGIN:
+                self._handle_login(packet, address)
+            case PacketTag.BULLY_ELECTION | PacketTag.BULLY_COORDINATOR | PacketTag.BULLY_LEADER_HEARTBEAT:
+                self.server_loop.handle_bully_message(packet, address)
+        return
 
-        if packet.tag in {PacketTag.GOSSIP_PLAYER_STATS, PacketTag.GOSSIP_MONSTER_SYNC}:
-            return self.server_loop.handle_gossip_message(packet, _address)
+    def _handle_login(self, packet: Packet, address: Address) -> None:
+        # Non leaders ignore login messages
+        if not self.server_loop.is_leader:
+            return
 
-        if packet.tag == PacketTag.LOGIN:
-            # Non leaders ignore login messages
-            if not self.server_loop.is_leader:
-                return None
+        try:
+            login_data = LoginData(**packet.content)
+            Debug.log(f"Login request received by {login_data.username}", "LEADER")
 
-            try:
-                login_data = LoginData(**packet.content)
-                Debug.log(f"Login request received by {login_data.username}", "LEADER")
-
-                server_info = self._assign_client()
-                login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
-                response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
-
-                return response
-            except TypeError as e:
-                print("Invalid login data received.", e)
-        return None
+            server_info = self._assign_client()
+            login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
+            response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
+            self.udp_socket.send_to(response, address)
+        except TypeError as e:
+            print("Invalid login data received.", e)
 
 class ClientCommunicator(TCPServerConnection):
     """ Communicates with a client using TCP connection. Incoming packets are filtered and their content is transformed into the appropriate data classes.

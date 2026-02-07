@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Callable, Optional, override
 
 from shared.data import *
 from shared.packet import PacketTag, Packet
-from shared.sockets import _TCPConnection, SocketUtils
+from shared.sockets import _TCPConnection, SocketUtils, UDPSocket, Address, AddressedPacket
+from shared.utils import Debug
 
 if TYPE_CHECKING:
     from server_logic import ConnectionManager
@@ -48,51 +49,52 @@ class TCPListener(_TCPConnection, Thread):
         return self.port_queue.get()
 
 
-class UDPListener(_TCPConnection, Thread):
-    """A socket which accepts udp packets."""
+class ServerUDPSocket(Thread):
+    """
+    Responsible for sending UDP unicasts and broadcasts and receiving UDP unicasts.
+    Use methods from the udp_socket field to send packets.
+    """
 
     def __init__(self, connection_manager: ConnectionManager):
-        super().__init__(mp.Queue())
+        super().__init__()
         self._connection_manager = connection_manager
-
-        # Queue to communicate the actual port back to the parent process
-        self.port_queue = mp.Queue()
-        self.buffer_size = 65507
+        self.udp_socket: Optional[UDPSocket] = UDPSocket()
 
     def run(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind(("0.0.0.0", 0))
-
-        self.port_queue.put(self.socket.getsockname()[1])
+        #self._udp_socket = UDPSocket()
+        self.udp_socket.start()
 
         while True:
-            try:
-                data, addr = self.socket.recvfrom(self.buffer_size)
-            except socket.timeout:
-                # timeout
-                continue
-            except OSError:
-                # socket was maybe closed from outside
-                break
-
-            try:
-                # print("Broadcast message received from ", addr)
-                packet = Packet.decode(data)
-            except json.JSONDecodeError:
-                # ungültiges JSON ignorieren
-                continue
-
-            # Also read server heartbeats
-            if packet.tag == PacketTag.SERVER_HEARTBEAT and self._connection_manager.server_loop.is_leader:
-                server_info = ServerInfo(**packet.content)
-
-                #Debug.log("Server heartbeat received.", "LEADER")
-                server_state = ServerState(server_info, time.monotonic())
-                self._connection_manager.server_view[server_info.server_uuid] = server_state
+            packet, addr = self.udp_socket.recv_queue.get()
+            self._handle_packet(packet, addr)
 
     def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
-        return self.port_queue.get()
+        return self.udp_socket.port_queue.get()
+
+    def _handle_packet(self, packet: Packet, _addr: Address) -> None:
+        """Handles incoming unicast packets"""
+        match packet.tag:
+            case PacketTag.SERVER_HEARTBEAT:
+                if self._connection_manager.server_loop.is_leader:
+                    server_info = ServerInfo(**packet.content)
+
+                    #Debug.log("Server heartbeat received.", "LEADER")
+                    server_state = ServerState(server_info, time.monotonic())
+                    self._connection_manager.server_view[server_info.server_uuid] = server_state
+
+            case PacketTag.BULLY_OK:
+                self._connection_manager.server_loop.handle_bully_ok_message(packet)
+
+    def send_to(self, packet: Packet, addr: Address, attempts = 1):
+        for _ in range(attempts):
+            self.udp_socket.send_queue.put((packet, addr))
+
+
+    def broadcast(self, packet: Packet, port = 10002, attempts = 1):
+        addr_packet: AddressedPacket = (packet, (SocketUtils.broadcast_ip, port))
+        for _ in range(attempts):
+            self.udp_socket.send_queue.put(addr_packet)
 
 
 class Heartbeat(Thread):
@@ -101,7 +103,7 @@ class Heartbeat(Thread):
     If a target_ip is specified, the heartbeat is only sent to this address. Otherwise, it is broadcasted.
     """
 
-    BROADCAST_IP = SocketUtils.broadcast_ip()
+    BROADCAST_IP = SocketUtils.broadcast_ip
 
     def __init__(self, packet_function: Callable[[], Packet], interval: float, target_ip: str = None, port: int = 10002, broadcast_attempts: int = 1):
         super().__init__(name="Heartbeat")
