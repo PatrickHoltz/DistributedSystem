@@ -124,6 +124,7 @@ class ServerLoop:
                 "stage": self.game_state_manager.get_monster().stage,
                 "damage": self.game_state_manager.overall_dmg,
             }))
+            self.damage_multicaster.empty_msg_queue()
 
             # self.connection_manager.tick_client_heartbeat(now)
 
@@ -227,7 +228,10 @@ class ServerLoop:
         if not stage or stage != self.game_state_manager.get_monster().stage:
             return
 
-        dif = damage - self.damage_tracker[uuid] if uuid in self.damage_tracker else damage
+        if uuid not in self.damage_tracker:
+            self.damage_tracker[uuid] = 0
+            
+        dif = damage - self.damage_tracker[uuid]
         
         if dif > 0:
             #self.game_state_manager.apply_attack_from_other_server(dif)
@@ -422,7 +426,7 @@ class ServerLoop:
                 if gt(self.server_uuid, leader_info.server_uuid):
                     with self._election_lock:
                         if self.election_in_progress:
-                            Debug.log("Ignoring weaker heartbeat <{leader_uuid}> during my election", "SERVER",
+                            Debug.log(f"Ignoring weaker heartbeat <{leader_info.server_uuid}> during my election", "SERVER",
                                       "BULLY")
                             return None
 

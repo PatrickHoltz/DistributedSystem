@@ -180,8 +180,8 @@ class MulticastSender(Thread):
 class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
-    DEBUG = True
-    OMISSION_CHANCE = 0.5
+    DEBUG = False
+    OMISSION_CHANCE = 0
 
     group: str
     uuid: UUID
@@ -333,16 +333,16 @@ class Multicaster:
         self._multicaster_process = MulticasterProcess(group, uuid)
         self.on_msg_handler = on_msg_handler
 
-        self._receive_handler = Thread(target=self._receive_loop, args=())
+        #self._receive_handler = Thread(target=self._receive_loop, args=())
 
-        self._receive_handler.start()
+        #self._receive_handler.start()
         self._multicaster_process.start()
 
     def cast_msg(self, msg: str) -> None:
         """Multicasts the message to the group"""
         self._multicaster_process.in_queue.put_nowait(msg)
 
-    def _receive_loop(self) -> None:
-        while True:
+    def empty_msg_queue(self) -> None:
+        while not self._multicaster_process.out_queue.empty():
             msg_str = self._multicaster_process.out_queue.get()
             self.on_msg_handler(msg_str)
