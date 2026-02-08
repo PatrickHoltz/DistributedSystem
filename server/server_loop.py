@@ -76,7 +76,6 @@ class ServerLoop:
         self.bully_heartbeat_timer: Timer | None = None
 
         self.connection_manager = ConnectionManager(self, self.server_uuid)
-        print("INIT")
         
         self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
         self.damage_tracker = {}
@@ -85,8 +84,6 @@ class ServerLoop:
                   "SERVER")
 
     def run(self):
-        print("FOO")
-        
         self._restart_leader_heartbeat_timer()
 
         while not self._is_stopped:
@@ -501,7 +498,6 @@ class ServerLoop:
 
     def get_heartbeat_packet(self) -> Packet:
         """Returns the correct heartbeat packet depending on weather this server is the leader or not."""
-        print("BAR")
         server_info = self.connection_manager.server_info
         if self.is_leader:
             return Packet(server_info, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)

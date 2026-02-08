@@ -24,16 +24,16 @@ class TCPListener(TCPConnection, Thread):
         # Queue to communicate the actual port back to the parent process
         self._connection_manager = connection_manager
         self.port_queue = mp.Queue()
-
-    def run(self):
+        
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind(("0.0.0.0", 0))
+        
+        self.port_queue.put(self.socket.getsockname()[1])
 
-        # set a high backlog so that no login request gets lost
+    def run(self):
+        # start listening with a high backlog so that no login request gets lost
         self.socket.listen(50)
         self.socket.settimeout(2.0)
-
-        self.port_queue.put(self.socket.getsockname()[1])
 
         while not self._stop_event.is_set():
             try:

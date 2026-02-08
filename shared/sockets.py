@@ -127,7 +127,6 @@ class UDPSocket(mp.Process):
 
         self._sender: Optional[Thread] = None
         self._receiver: Optional[Thread] = None
-        self._socket: Optional[socket.socket] = None
 
         self.send_queue: mp.Queue[AddressedPacket] = mp.Queue()
         self.recv_queue: mp.Queue[AddressedPacket] = mp.Queue()
@@ -136,11 +135,7 @@ class UDPSocket(mp.Process):
         self.latest_uuids = deque(["" for _ in range(100)])
 
         self.port_queue: mp.Queue[int] = mp.Queue()
-
-
-    def run(self):
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-
+        
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         # let OS decide port, therefore no broadcast can be received
@@ -150,8 +145,11 @@ class UDPSocket(mp.Process):
         assigned_port = self._socket.getsockname()[1]
         self.port_queue.put(assigned_port)
 
+    def run(self):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
         # wait until required fields are set up
-        time.sleep(1.0)
+        time.sleep(1.0) # TODO: what fields, 1sec sleep seams exessiv?
 
         self._sender = Thread(target=self._send_loop, daemon=True)
         self._receiver = Thread(target=self._recv_loop, daemon=True)
