@@ -100,6 +100,15 @@ class ServerLoop:
             self.game_state_manager.latest_damage_numbers = []
 
             self._process_incoming_messages()
+            
+            # multicast aggregated damage to other servers
+            # note: needs to be befor _leader_apply_monster_progress
+            self.damage_multicaster.cast_msg(json.dumps({
+                "uuid": self.server_uuid,
+                "stage": self.game_state_manager.get_monster().stage,
+                "damage": self.game_state_manager.overall_dmg,
+            }))
+            self.damage_multicaster.empty_msg_queue()
 
             # Leader computes monster HP/stage based on merged damage counters
             self._leader_apply_monster_progress()
@@ -111,14 +120,6 @@ class ServerLoop:
 
             self._update_game_states()
             self._send_outgoing_messages()
-
-            # multicast aggregated damage to other servers
-            self.damage_multicaster.cast_msg(json.dumps({
-                "uuid": self.server_uuid,
-                "stage": self.game_state_manager.get_monster().stage,
-                "damage": self.game_state_manager.overall_dmg,
-            }))
-            self.damage_multicaster.empty_msg_queue()
 
             # self.connection_manager.tick_client_heartbeat(now)
 
