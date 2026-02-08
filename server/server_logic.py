@@ -258,7 +258,7 @@ class ConnectionManager:
         """
         if now >= self._next_client_ping:
             self._next_client_ping += self.CLIENT_HEARTBEAT_INTERVAL
-            self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
+            self.server_loop.deliver_packet_to_clients(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
 
         to_drop = []
         for username in list(self.active_connections.keys()):

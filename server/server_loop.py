@@ -169,7 +169,7 @@ class ServerLoop:
 
         # TODO change to actuall multicast
         new_monster = self.game_state_manager.get_monster()
-        self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
+        self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
     def _on_damage_multicast(self, msg: str):
         data = json.loads(msg)
@@ -210,7 +210,7 @@ class ServerLoop:
 
 
 
-    def multicast_packet(self, packet: Packet):
+    def deliver_packet_to_clients(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""
         for username in self.connection_manager.active_connections.keys():
             self.out_queue.put((username, packet))
