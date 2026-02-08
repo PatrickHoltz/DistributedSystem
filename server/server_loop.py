@@ -4,8 +4,8 @@ import time
 import json
 import random
 
-from threading import Lock, Timer
 from typing import Optional
+from dataclasses import asdict
 
 from uuid import UUID, uuid4
 from threading import Lock, Timer
@@ -104,6 +104,7 @@ class ServerLoop:
             # multicast aggregated damage to other servers
             # note: needs to be befor _leader_apply_monster_progress
             self.damage_multicaster.cast_msg(json.dumps({
+                "type": "dmg",
                 "uuid": self.server_uuid,
                 "stage": self.game_state_manager.get_monster().stage,
                 "damage": self.game_state_manager.overall_dmg,
@@ -167,34 +168,51 @@ class ServerLoop:
         self.game_state_manager.advance_monster_stage()
         self.monster_id = str(uuid4())
 
-        # TODO change to actuall multicast
         new_monster = self.game_state_manager.get_monster()
+        self.damage_multicaster.cast_msg(json.dumps({
+                "type": "monster",
+                "monster": asdict(new_monster),
+        }))
+        
         self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
     def _on_damage_multicast(self, msg: str):
         data = json.loads(msg)
-        uuid = data['uuid']
-        damage = data['damage']
-        stage = data['stage']
+        type = data['type']
         
-        if not stage or stage != self.game_state_manager.get_monster().stage:
-            return
+        match type:
+            case 'dmg':
+                uuid = data['uuid']
+                damage = data['damage']
+                stage = data['stage']
 
-        if uuid not in self.damage_tracker:
-            self.damage_tracker[uuid] = 0
-            
-        dif = damage - self.damage_tracker[uuid]
-        
-        if dif > 0:
-            #self.game_state_manager.apply_attack_from_other_server(dif)
-            self.damage_tracker[uuid] = damage
-            self.game_state_manager.latest_damage_numbers.append(dif)
-            
-            dmg_sum = self.game_state_manager.overall_dmg
-            for _uuid, dmg in self.damage_tracker.items():
-                dmg_sum += dmg
-            
-            self.game_state_manager.apply_attacks(dmg_sum)
+                if not stage or stage != self.game_state_manager.get_monster().stage:
+                    print(f"IGNORING STAGE {stage} != {self.game_state_manager.get_monster().stage}")
+                    return
+
+                if uuid not in self.damage_tracker:
+                    self.damage_tracker[uuid] = 0
+
+                dif = damage - self.damage_tracker[uuid]
+
+                if dif > 0:
+                    #self.game_state_manager.apply_attack_from_other_server(dif)
+                    self.damage_tracker[uuid] = damage
+                    self.game_state_manager.latest_damage_numbers.append(dif)
+
+                    dmg_sum = self.game_state_manager.overall_dmg
+                    for _uuid, dmg in self.damage_tracker.items():
+                        dmg_sum += dmg
+
+                    self.game_state_manager.apply_attacks(dmg_sum)
+                    print(f"DMG SUM: {dmg_sum}, Monster HP: {self.game_state_manager.get_monster().health}")
+
+            case 'monster':
+                new_monster = MonsterData(**data['monster'])
+                print(f"NEW MONSTER: {new_monster}")
+                
+                self.game_state_manager.set_monster(new_monster)
+                self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
     def stop(self):
         self._is_stopped = True
