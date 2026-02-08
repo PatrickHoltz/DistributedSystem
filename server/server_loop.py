@@ -80,7 +80,7 @@ class ServerLoop:
                                                 server_uuid=UUID(self.server_uuid).int)
         self.bully_listener.start()
 
-        self.damage_multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
+        self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
         self.damage_tracker = {}
 
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
@@ -103,13 +103,13 @@ class ServerLoop:
             
             # multicast aggregated damage to other servers
             # note: needs to be befor _leader_apply_monster_progress
-            self.damage_multicaster.cast_msg(json.dumps({
+            self.multicaster.cast_msg(json.dumps({
                 "type": "dmg",
                 "uuid": self.server_uuid,
                 "stage": self.game_state_manager.get_monster().stage,
                 "damage": self.game_state_manager.overall_dmg,
             }))
-            self.damage_multicaster.empty_msg_queue()
+            self.multicaster.empty_msg_queue()
 
             # Leader computes monster HP/stage based on merged damage counters
             self._leader_apply_monster_progress()
@@ -169,7 +169,7 @@ class ServerLoop:
         self.monster_id = str(uuid4())
 
         new_monster = self.game_state_manager.get_monster()
-        self.damage_multicaster.cast_msg(json.dumps({
+        self.multicaster.cast_msg(json.dumps({
                 "type": "monster",
                 "monster": asdict(new_monster),
         }))
