@@ -107,20 +107,6 @@ class ClientInfo:
     port: int
 
 @dataclass
-class GossipMonsterSync:
-    monster_id: str
-    leader_uuid: str
-    monster: MonsterData
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        return cls(
-            monster_id=data["monster_id"],
-            leader_uuid=data["leader_uuid"],
-            monster=MonsterData(**data["monster"]),
-        )
-
-@dataclass
 class PlayerStats:
     player_count: int
     players: dict[str, PlayerData]

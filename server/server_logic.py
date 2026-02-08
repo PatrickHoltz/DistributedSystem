@@ -89,16 +89,18 @@ class GameStateManager:
         return MonsterData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
 
     def apply_attack(self, username: str):
-        """Applies an attack from the given player to the current monster. Advances the monster stage if the monster is defeated.
-        Returns True if the monster is defeated afterward, False otherwise.
+        """Applies an attack from the given player to the current monster. Returns the damage dealt to the monster.
         """
-        if username in self._game_state.players:
-            damage = self._game_state.players[username].damage
-            self._game_state.monster.health -= damage
-            self.latest_damage_numbers.append(damage)
-            self.overall_dmg += damage
-            return damage
-        return 0
+        if username not in self._game_state.players:
+            return 0
+        
+        damage = self._game_state.players[username].damage
+        self._game_state.monster.health -= damage
+
+        self.latest_damage_numbers.append(damage)
+        self.overall_dmg += damage
+        return damage
+        
 
     def apply_attacks(self, damage: int) -> None:
         """Applies the damage registered on another server and send via multicast"""
