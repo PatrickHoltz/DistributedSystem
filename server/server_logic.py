@@ -103,9 +103,9 @@ class GameStateManager:
         
 
     def apply_attacks(self, damage: int) -> None:
-        """Applies the damage registered on another server and send via multicast"""
+        """Set the health of the monster to the max healt minus the damage. 
+        Damage should be the sum og all damage from all servers."""
         self._game_state.monster.health = self._game_state.monster.max_health - damage
-        #self.latest_damage_numbers.append(damage)
 
     def _advance_monster_stage(self):
         new_stage = self._game_state.monster.stage + 1

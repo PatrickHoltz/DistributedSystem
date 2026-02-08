@@ -187,10 +187,12 @@ class ServerLoop:
         if dif > 0:
             #self.game_state_manager.apply_attack_from_other_server(dif)
             self.damage_tracker[uuid] = damage
+            self.game_state_manager.latest_damage_numbers.append(dif)
             
-            dmg_sum = 0
+            dmg_sum = self.game_state_manager.overall_dmg
             for _uuid, dmg in self.damage_tracker.items():
                 dmg_sum += dmg
+            
             self.game_state_manager.apply_attacks(dmg_sum)
 
     def stop(self):
