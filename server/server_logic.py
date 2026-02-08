@@ -121,10 +121,12 @@ class GameStateManager:
     def advance_monster_stage(self):
         """Only leader should call"""
         self._advance_monster_stage()
+        self.overall_dmg = 0
 
     def set_monster(self, monster: MonsterData):
         """Follower takes monster from leader"""
         self._game_state.monster = monster
+        self.overall_dmg = 0
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online."""
