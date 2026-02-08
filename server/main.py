@@ -2,22 +2,15 @@ import random
 from uuid import uuid4
 from multicast import Multicaster
 from server_loop import ServerLoop
+from shared.utils import Debug
 
 import time
 
 if __name__ == '__main__':
-    server_loop = ServerLoop()
-
-def test_multicast():
-    test = Multicaster(uuid4())
-    time.sleep(3)
-    test.cast_msg("HELLO")
-    time.sleep(3)
-    test.cast_msg("FOO")
-    test.cast_msg("BAR")
-
-    i = 0
-    while(True):
-        time.sleep(random.uniform(1, 3))
-        test.cast_msg("MSG" + str(i))
-        i += 1
+    server_loop = None
+    try:
+        server_loop = ServerLoop()
+        server_loop.run()
+    except KeyboardInterrupt:
+        Debug.log(f"Shutting down server...")
+        server_loop.stop()

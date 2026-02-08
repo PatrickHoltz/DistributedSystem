@@ -38,11 +38,11 @@ class PacketTag(StrEnum):
     GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
 
 
-class Packet:
+class Packet[T]:
     """Basic packet for client-server communication.
     """
 
-    def __init__(self, content: object | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = None,
+    def __init__(self, content: T | dict, tag: PacketTag = PacketTag.NONE, packet_uuid: str = None,
                  server_uuid: int = -1, length: int = 0):
         """Content must be a dataclass"""
         self.content = content

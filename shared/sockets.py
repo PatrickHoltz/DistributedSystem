@@ -1,17 +1,24 @@
 """This module contains classes for sending packets in different forms."""
-
+import dataclasses
 import json
 import multiprocessing as mp
 import queue
 import socket
 import struct
+import time
 from collections import deque
 from concurrent.futures import Future
+import signal
 from threading import Thread, Event
 from typing import Optional, Callable, TypeVar, Type
+import subprocess
+import ipaddress
 
 from shared.packet import Packet
+from shared.utils import Debug
 
+type Address = tuple[str, int]
+type AddressedPacket = tuple[Packet, Address]
 
 class SocketUtils:
     T = TypeVar('T')
@@ -59,10 +66,44 @@ class SocketUtils:
 
     local_ip = _get_local_ip()
 
+    @staticmethod
+    def _get_broadcast_addr() -> str:
+
+        cmd = [
+            "wmic",
+            "nicconfig",
+            "where",
+            "IPEnabled=true",
+            "get",
+            "IPAddress,IPSubnet",
+            "/format:csv"
+        ]
+
+        output = subprocess.check_output(cmd, text=True)
+
+        for line in output.splitlines():
+            if "," not in line or "Node" in line:
+                continue
+
+            _, ip_list, subnet_list = line.split(",", 2)
+
+            # IPAddress and IPSubnet are arrays like: {192.168.1.23}
+            ip = ip_list.strip("{}").split(';')[0]
+            mask = subnet_list.strip("{}").split(';')[0]
+
+            iface = ipaddress.ip_interface(f"{ip}/{mask}")
+
+            #print("IP:", ip)
+            #print("Broadcast:", iface.network.broadcast_address)
+            return str(iface.network.broadcast_address)
+        raise "Could not find broadcast address."
+
+    broadcast_ip = _get_broadcast_addr()
+
 
     # TODO use this method everywhere where packets are being received. Also make Packet generic
     @classmethod
-    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet | None:
+    def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet[T] | None:
         """
         Extracts the content of a packet and converts it to the specified type.
         Returns None if the conversion fails.
@@ -74,32 +115,97 @@ class SocketUtils:
             return None
 
 
-class UDPSocket(Thread):
+class UDPSocket(mp.Process):
     """
-    Send data to a server via UDP.
+    Socket to unicast and broadcast UDP packets and receive unicast packets.
     """
 
-    def __init__(self, packet: Packet, server_address: str, server_port: int):
+    def __init__(self, stop_event = mp.Event()):
         super().__init__()
-        self.packet = packet
-        self.server_address = server_address
-        self.server_port = server_port
+        self._stop_event = stop_event
+        self.buffer_size: int = 65507
+
+        self._sender: Optional[Thread] = None
+        self._receiver: Optional[Thread] = None
+        self._socket: Optional[socket.socket] = None
+
+        self.send_queue: mp.Queue[AddressedPacket] = mp.Queue()
+        self.recv_queue: mp.Queue[AddressedPacket] = mp.Queue()
+
+        # the latest packet uuids received
+        self.latest_uuids = deque(["" for _ in range(100)])
+
+        self.port_queue: mp.Queue[int] = mp.Queue()
+
 
     def run(self):
-        udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        print("Connecting to: ", (self.server_address, self.server_port))
-        udp_socket.connect((self.server_address, self.server_port))
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # let OS decide port, therefore no broadcast can be received
+        self._socket.bind(("", 0))
+        self._socket.settimeout(2.0)
 
-        udp_socket.sendall(self.packet.encode())
+        assigned_port = self._socket.getsockname()[1]
+        self.port_queue.put(assigned_port)
 
-        udp_socket.close()
+        # wait until required fields are set up
+        time.sleep(1.0)
+
+        self._sender = Thread(target=self._send_loop, daemon=True)
+        self._receiver = Thread(target=self._recv_loop, daemon=True)
+        self._sender.start()
+        self._receiver.start()
+
+        self._stop_event.wait()
+
+        self._sender.join(timeout=5)
+        self._receiver.join(timeout=5)
+
+        self._socket.close()
+        Debug.log("UDP socket stopped.")
+
+    def _send_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                packet, addr = self.send_queue.get(timeout=2.0)
+                self._socket.sendto(packet.encode(), addr)
+            except queue.Empty:
+                continue
+            except OSError as e:
+                Debug.log(f"Could not send package. {str(e)}")
+                continue
+        Debug.log("Sender stopped.")
+
+    def _recv_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                data, addr = self._socket.recvfrom(self.buffer_size)
+                packet = Packet.decode(data)
+
+                # if packet uuid has been seen before lately, ignore
+                if packet.packet_uuid in self.latest_uuids:
+                    continue
+                else:
+                    self.latest_uuids.appendleft(packet.packet_uuid)
+                    self.latest_uuids.pop()
+
+                self.recv_queue.put((packet, addr))
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+        Debug.log("Receiver stopped.")
+
+    def stop(self):
+        self._stop_event.set()
 
 
 class BroadcastSocket(Thread):
     """Broadcasts a single packet to the specified broadcast address using a new socket. A response can be obtained."""
 
-    BROADCAST_IP = "255.255.255.255"
+    BROADCAST_IP = SocketUtils.broadcast_ip
 
     def __init__(
             self,
@@ -161,9 +267,10 @@ class BroadcastListener(Thread):
     def __init__(
             self,
             port: int = 10002,
-            on_message: Callable[[Packet, tuple[str, int]], Packet] = None,
+            on_message: Callable[[Packet, Address], None] = None,
             buffer_size: int = 65507,
-            server_uuid: int = -1
+            server_uuid: int = -1,
+            stop_event = mp.Event()
     ):
         super().__init__(daemon=True)
 
@@ -177,7 +284,7 @@ class BroadcastListener(Thread):
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
-        self._stop_event = Event()
+        self._stop_event = stop_event
         self.latest_uuids = deque(["" for _ in range(100)])
 
         self.port_queue = mp.Queue()
@@ -198,60 +305,55 @@ class BroadcastListener(Thread):
             while not self._stop_event.is_set():
                 try:
                     data, addr = sock.recvfrom(self.buffer_size)
+                    packet = Packet.decode(data)
                 except socket.timeout:
                     # oft checken, ob wir stoppen sollen
                     continue
                 except OSError:
                     # Socket wurde evtl. von außen geschlossen
                     break
-
-                try:
-                    # print("Broadcast message received from ", addr)
-                    content = Packet.decode(data)
                 except json.JSONDecodeError:
                     # ungültiges JSON ignorieren
                     continue
 
 
                 # if server_uuid is provided then ignore msgs by myself
-                if self.server_uuid != -1 and self.server_uuid == content.server_uuid:
-                        continue
+                if self.server_uuid != -1 and self.server_uuid == packet.server_uuid:
+                    continue
 
                 # if packet uuid has been seen before lately, ignore
-                if content.packet_uuid in self.latest_uuids:
+                if packet.packet_uuid in self.latest_uuids:
                     continue
                 else:
-                    self.latest_uuids.appendleft(content.packet_uuid)
+                    self.latest_uuids.appendleft(packet.packet_uuid)
                     self.latest_uuids.pop()
 
-                response_packet: Packet = self.on_message(content, addr)
-                if response_packet:
-                    sock.sendto(response_packet.encode(), addr)
+                #Debug.log(f"Broadcast message received from {addr}, {packet.tag}")
+                self.on_message(packet, addr)
 
 
         finally:
             sock.close()
+            Debug.log("Broadcast listener stopped.")
 
     def get_port(self) -> int:
         """Returns the port the server is listening on. Blocks until the port is available."""
         return self.port_queue.get()
 
 
-class _TCPConnection:
+class TCPConnection:
     """An abstract TCP connection which can be used for both sending and receiving packets."""
 
     T = TypeVar('T')
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
-    def __init__(self, recv_queue: mp.Queue):
+    def __init__(self, recv_queue: mp.Queue, stop_event = mp.Event()):
         super().__init__()
 
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
 
-        self._stop_event = mp.Event()
-
-
+        self._stop_event = stop_event
 
         self.socket: Optional[socket.socket] = None
 
@@ -319,7 +421,7 @@ class _TCPConnection:
         raise NotImplementedError("Subclasses must implement _handle_packet method.")
 
 
-class TCPClientConnection(_TCPConnection, Thread):
+class TCPClientConnection(TCPConnection, Thread):
     """A simple TCP client connection that can send and receive packets.
     """
 
@@ -360,7 +462,7 @@ class TCPClientConnection(_TCPConnection, Thread):
             self.socket.close()
 
 
-class TCPServerConnection(_TCPConnection, Thread):
+class TCPServerConnection(TCPConnection, Thread):
     """A simple TCP server connection that accepts a single connection and can send and receive packets."""
 
     def __init__(self, conn_socket: socket.socket, recv_queue: mp.Queue, backlog: int = 1):
