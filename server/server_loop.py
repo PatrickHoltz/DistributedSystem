@@ -62,8 +62,6 @@ class ServerLoop:
         self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
         self._last_leader_seen = time.monotonic()
 
-        self.monster_id: str = str(uuid4())
-
         self._stats_seq: int = 0
         self._last_stats_seq_by_server: dict[str, int] = {}
         self._next_gossip_stats = time.monotonic() + random.uniform(0.0, self.GOSSIP_PLAYER_STATS_INTERVAL)
@@ -110,6 +108,7 @@ class ServerLoop:
                 "damage": self.game_state_manager.overall_dmg,
             }))
             self.multicaster.empty_msg_queue()
+            print(f"dmg_tracker: {self.damage_tracker} overal_dmg: {self.game_state_manager.overall_dmg}")
 
             # Leader computes monster HP/stage based on merged damage counters
             self._leader_apply_monster_progress()
@@ -166,7 +165,7 @@ class ServerLoop:
             return
 
         self.game_state_manager.advance_monster_stage()
-        self.monster_id = str(uuid4())
+        self.damage_tracker = {}
 
         new_monster = self.game_state_manager.get_monster()
         self.multicaster.cast_msg(json.dumps({
@@ -212,6 +211,8 @@ class ServerLoop:
                 print(f"NEW MONSTER: {new_monster}")
                 
                 self.game_state_manager.set_monster(new_monster)
+                self.damage_tracker = {}
+                
                 self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
     def stop(self):
