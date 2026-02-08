@@ -181,6 +181,7 @@ class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
     DEBUG = False
+    LOGGING = False
     OMISSION_CHANCE = 0
 
     group: str
@@ -224,6 +225,11 @@ class MulticasterProcess(Process):
 
         while True:
             msg_str = self.in_queue.get()
+            
+            if self.LOGGING:
+                with open(f"multicast_log-{self.uuid}.txt", "a") as f:
+                    f.write(f"Sending package: {msg_str}\n")
+            
             self._reliable_multicast(msg_str)
 
     def _receive_loop(self):
@@ -233,13 +239,17 @@ class MulticasterProcess(Process):
                 if msg is None:
                     continue
                 
-                if random.random() > self.OMISSION_CHANCE:
+                if random.random() > 1 - self.OMISSION_CHANCE: # 0.0 <= random() < 1.0
                     if self.DEBUG:
                         Debug.log(f"Simulating package omission for {msg.type_id}", "MULTICASTER")
                     return
 
                 if self.DEBUG:
                     Debug.log(f"Receiving package with type {msg.type_id}", "MULTICASTER")
+                
+                if self.LOGGING:
+                    with open(f"multicast_log-{self.uuid}.txt", "a") as f:
+                        f.write(f"Receiving package: {msg}\n")
 
                 match(msg.type_id):
                     case MulticastMessagePacket.TYPE_ID:
@@ -300,6 +310,10 @@ class MulticasterProcess(Process):
     def _reliable_deliver(self, msg: MulticastMessagePacket) -> None:
         if self.DEBUG:
             Debug.log(f"Delivering package: {msg.sequence_id} > {msg.content}", "MULTICASTER")
+
+        if self.LOGGING:
+            with open(f"multicast_log-{self.uuid}.txt", "a") as f:
+                f.write(f"Delivering package: {msg}\n")
 
         data = json.loads(msg.content)
         if msg.sender_uuid == self.uuid:
