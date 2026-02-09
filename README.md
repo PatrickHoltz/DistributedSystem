@@ -2,19 +2,19 @@
 
 ## TODOs
 #### Server
-- [ ] Startup
-  - [ ] Discover leader
+- [x] Startup
+  - [x] Discover leader
     - [x] Broadcast into server network
     - [x] Handle leader answer
     - [x] Start leader election
       - [x] Perform **bully algorithm** 
-        - [ ] *Check if our modification satisfies failure modes*
+        - [x] *Check if our modification satisfies failure modes*
 - [ ] Handle clients
   - [ ] Handle client assignment by leader
     - [x] Connect to client
     - [x] Send initial game state
-    - [ ] Store player in database
-      - [ ] Perform **gossip algorithm**
+    - [x] Store player in database
+      - [x] Perform **gossip algorithm**
   - [x] Aggregate client data (damage dealt)
   - [x] Disconnect timed out clients
 - [ ] Sync game state
@@ -39,15 +39,15 @@
   - [x] Send damage to server
   - [x] Display damage
   - [x] Disconnect from server
-- [ ] Handle server input
+- [x] Handle server input
   - [x] Display damage
   - [x] Display/Update boss health
   - [x] Display/Hide win screen
   - [x] Switch server (in case of reassignment)
 
 #### Code Improvements
-- [ ] Look over Thread creations (performance)
+- [x] Look over Thread creations (performance)
 - [ ] Unify sockets that have common attributes / methods
-- [ ] Switch Broadcast to Multicast (broadcast messages may not be sent to all processes)
-- [ ] Rethink using standard Bully (higher UUID joins -> triggers election) but current may be better
+- [x] Switch Broadcast to Multicast (broadcast messages may not be sent to all processes)
+- [x] Rethink using standard Bully (higher UUID joins -> triggers election) but current may be better
 - [ ] When leader timeouts and comes back after a time 
