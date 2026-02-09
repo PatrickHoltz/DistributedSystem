@@ -162,6 +162,11 @@ class GameStateManager:
         online_players = [p for p in self._game_state.players.values() if p.online]
         return len(online_players)
 
+    def is_player_online(self, username: str):
+        if username in self._game_state.players:
+            return self._game_state.players[username].online
+        return False
+
 
 class ConnectionManager:
     """Maintains active client connections and handles new logins using a broadcast listener."""
@@ -286,8 +291,12 @@ class ConnectionManager:
             login_data = LoginData(**packet.content)
             Debug.log(f"Login request received by {login_data.username}", "LEADER")
 
-            server_info = self._assign_client()
-            login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
+            # check if player is already logged in
+            if self.server_loop.game_state_manager.is_player_online(login_data.username):
+                login_reply = LoginReplyData("NONE", 0, login_data.username)
+            else:
+                server_info = self._assign_client()
+                login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
             response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
             self.udp_socket.send_to(response, address)
         except TypeError as e:
