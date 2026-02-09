@@ -1,17 +1,17 @@
 """This module contains classes for sending packets in different forms."""
+import ipaddress
 import json
 import multiprocessing as mp
 import queue
+import signal
 import socket
 import struct
+import subprocess
 import time
 from collections import deque
 from concurrent.futures import Future
-import signal
 from threading import Thread
 from typing import Optional, Callable, TypeVar, Type
-import subprocess
-import ipaddress
 
 from shared.packet import Packet
 from shared.utils import Debug
@@ -92,15 +92,11 @@ class SocketUtils:
 
             iface = ipaddress.ip_interface(f"{ip}/{mask}")
 
-            #print("IP:", ip)
-            #print("Broadcast:", iface.network.broadcast_address)
             return str(iface.network.broadcast_address)
         raise "Could not find broadcast address."
 
     broadcast_ip = _get_broadcast_addr()
 
-
-    # TODO use this method everywhere where packets are being received. Also make Packet generic
     @classmethod
     def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet[T] | None:
         """
@@ -147,7 +143,7 @@ class UDPSocket(mp.Process):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         # wait until required fields are set up
-        time.sleep(1.0) # TODO: what fields, 1sec sleep seams exessiv?
+        #time.sleep(1.0)
 
         self._sender = Thread(target=self._send_loop, daemon=True)
         self._receiver = Thread(target=self._recv_loop, daemon=True)
@@ -249,13 +245,6 @@ class BroadcastSocket(Thread):
                     self.future.set_result(None)
         finally:
             udp_socket.close()
-
-    @classmethod
-    def calculate_broadcast(cls, ip, mask):
-        ip_int = struct.unpack("!I", socket.inet_aton(ip))[0]
-        mask_int = struct.unpack("!I", socket.inet_aton(mask))[0]
-        broadcast_int = ip_int | (~mask_int & 0xFFFFFFFF)
-        return socket.inet_ntoa(struct.pack("!I", broadcast_int))
 
 
 class BroadcastListener(Thread):

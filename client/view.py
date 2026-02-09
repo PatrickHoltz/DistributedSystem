@@ -96,34 +96,40 @@ class LoginPage(ctk.CTkFrame):
 
         self.app.dispatcher.subscribe(Events.LOGIN_FAILED, self._on_login_failed)
 
-        center_frame = ctk.CTkFrame(self, fg_color="transparent")
-        center_frame.pack(expand=True)
+        self.center_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.center_frame.pack(expand=True)
 
         label = ctk.CTkLabel(
-            center_frame, text="Welcome to Kill the Monster. Please login.")
+            self.center_frame, text="Welcome to Kill the Monster. Please login.")
         label.pack()
 
         self.username_input = ctk.CTkEntry(
-            center_frame, placeholder_text="Enter username")
+            self.center_frame, placeholder_text="Enter username")
         self.username_input.pack(pady=10)
 
-        self.login_button = ctk.CTkButton(center_frame, text="Login", command=self.login)
+        self.login_button = ctk.CTkButton(self.center_frame, text="Login", command=self.login)
         self.login_button.pack()
+
+        self.error_message_label = ctk.CTkLabel(self.center_frame, text="", text_color="red")
 
     def on_show(self):
         """Called when LoginPage becomes visible."""
         self.login_button.configure(state="normal")
+        self.error_message_label.pack_forget()
 
     def login(self):
         username = self.username_input.get()
         self.app.username = username
         self.login_button.configure(state="disabled")
         self.app.dispatcher.emit(Events.LOGIN_CLICKED, username)
+        self.error_message_label.pack_forget()
 
-    def _on_login_failed(self):
+    def _on_login_failed(self, message: str):
         if not isinstance(self.app.current_frame, LoginPage):
             self.app.show_frame(LoginPage)
         self.login_button.configure(state="normal")
+        self.error_message_label.configure(text=message)
+        self.error_message_label.pack()
 
 
 class GamePage(ctk.CTkFrame):

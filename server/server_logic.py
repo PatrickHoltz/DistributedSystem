@@ -162,6 +162,11 @@ class GameStateManager:
         online_players = [p for p in self._game_state.players.values() if p.online]
         return len(online_players)
 
+    def is_player_online(self, username: str):
+        if username in self._game_state.players:
+            return self._game_state.players[username].online
+        return False
+
 
 class ConnectionManager:
     """Maintains active client connections and handles new logins using a broadcast listener."""
@@ -271,7 +276,7 @@ class ConnectionManager:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
         match packet.tag:
             case PacketTag.GOSSIP_PLAYER_STATS | PacketTag.GOSSIP_MONSTER_SYNC:
-                self.server_loop.handle_gossip_message(packet, address)
+                self.server_loop.handle_gossip_message(packet)
             case PacketTag.LOGIN:
                 self._handle_login(packet, address)
             case PacketTag.BULLY_ELECTION | PacketTag.BULLY_COORDINATOR | PacketTag.BULLY_LEADER_HEARTBEAT:
@@ -287,8 +292,12 @@ class ConnectionManager:
             login_data = LoginData(**packet.content)
             Debug.log(f"Login request received by {login_data.username}", "LEADER")
 
-            server_info = self._assign_client()
-            login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
+            # check if player is already logged in
+            if self.server_loop.game_state_manager.is_player_online(login_data.username):
+                login_reply = LoginReplyData("NONE", 0, login_data.username)
+            else:
+                server_info = self._assign_client()
+                login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
             response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
             self.udp_socket.send_to(response, address)
         except TypeError as e:

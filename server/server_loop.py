@@ -122,7 +122,7 @@ class ServerLoop:
 
             time.sleep(max(0, self.tick_rate - (time.time() - start_time)))
 
-    def handle_gossip_message(self, packet: Packet, address: tuple[str, int]):
+    def handle_gossip_message(self, packet: Packet):
         match packet.tag:
             case PacketTag.GOSSIP_PLAYER_STATS:
                 sender_uuid = packet.content.get("server_uuid")
@@ -173,9 +173,9 @@ class ServerLoop:
 
     def _on_damage_multicast(self, msg: str):
         data = json.loads(msg)
-        type = data['type']
+        mc_type = data['type']
         
-        match type:
+        match mc_type:
             case 'dmg':
                 uuid = data['uuid']
                 damage = data['damage']
@@ -411,9 +411,6 @@ class ServerLoop:
     def _handle_bully_leader_heartbeat(self, packet: Packet):
         leader_heartbeat = LeaderHeartbeat.from_dict(packet.content)
         leader_info = leader_heartbeat.server_info
-
-        # if leader_uuid == self.server_uuid:
-        #     return None
 
         #Debug.log(f"Received leader heartbeat from <{leader_info.server_uuid}>", "SERVER", "BULLY")
 

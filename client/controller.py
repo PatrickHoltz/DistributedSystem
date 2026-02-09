@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional, override
+from typing import Optional
 
 from client.events import UIEventDispatcher, Events
 from model import ClientGameState
 from shared.data import *
-from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
 from shared.packet import PacketTag, Packet
+from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
 from shared.utils import Debug
 
 
@@ -25,7 +25,8 @@ class LoginService:
         print("Logging in...")
         login_data = LoginData(username)
         packet = Packet(login_data, tag=PacketTag.LOGIN)
-        login_broadcast = BroadcastSocket(packet, self._handle_login_response, self._handle_login_timeout)
+        login_broadcast = BroadcastSocket(packet, self._handle_login_response,
+                                          lambda: self._handle_login_failure("Login failed. Server did not respond"))
         login_broadcast.start()
 
     def _handle_login_response(self, packet: Packet, _address: tuple[str, int]):
@@ -34,13 +35,16 @@ class LoginService:
         if packet.tag == PacketTag.LOGIN_REPLY:
             try:
                 login_reply = LoginReplyData(**packet.content)
-                self._game_controller.on_logged_in(login_reply)
+                if login_reply.server_ip == "NONE":
+                    self._handle_login_failure("You are already logged in somewhere else.")
+                else:
+                    self._game_controller.on_logged_in(login_reply)
             except TypeError as e:
                 print("Invalid game state received.", e)
     
-    def _handle_login_timeout(self):
+    def _handle_login_failure(self, message: str):
         print("Login failed. Server did not respond to login request.")
-        self._game_controller.dispatcher.emit(Events.LOGIN_FAILED)
+        self._game_controller.dispatcher.emit(Events.LOGIN_FAILED, message)
 
 
 class ConnectionService(TCPClientConnection):
@@ -170,9 +174,8 @@ class GameController:
 
     def on_attack_clicked(self):
         """Callback for when the attack button is clicked."""
-        damage = self.client_game_state.attack_monster()
         self._connection_service.send_attack()
-        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, []) # TODO [damage]
+        self.dispatcher.emit(Events.UPDATE_GAME_STATE, self.client_game_state, [])
         return self.client_game_state.monster
 
     def on_logout_clicked(self):
