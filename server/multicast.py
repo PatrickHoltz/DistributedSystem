@@ -289,7 +289,7 @@ class MulticasterProcess(Process):
                             key = (msg.msg_sender_uuid, msg.msg_sequence_id)
                             if key in self._received_msgs:
                                 stored_msgs = self._received_msgs[key]
-                                self._sender.send(stored_msgs) # TODO: if remulticasting is correct or just a simple direct send is intended?
+                                self._sender.send(stored_msgs)
 
     # basic multicast
     def _on_receive(self, msg: MulticastMessagePacket) -> None:

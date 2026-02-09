@@ -92,15 +92,11 @@ class SocketUtils:
 
             iface = ipaddress.ip_interface(f"{ip}/{mask}")
 
-            #print("IP:", ip)
-            #print("Broadcast:", iface.network.broadcast_address)
             return str(iface.network.broadcast_address)
         raise "Could not find broadcast address."
 
     broadcast_ip = _get_broadcast_addr()
 
-
-    # TODO use this method everywhere where packets are being received. Also make Packet generic
     @classmethod
     def get_typed_packet(cls, packet: Packet, content_type: Type[T]) -> Packet[T] | None:
         """
@@ -148,7 +144,7 @@ class UDPSocket(mp.Process):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
         # wait until required fields are set up
-        time.sleep(1.0) # TODO: what fields, 1sec sleep seams exessiv?
+        #time.sleep(1.0)
 
         self._sender = Thread(target=self._send_loop, daemon=True)
         self._receiver = Thread(target=self._recv_loop, daemon=True)
