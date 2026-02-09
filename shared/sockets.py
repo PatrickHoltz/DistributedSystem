@@ -157,8 +157,8 @@ class UDPSocket(mp.Process):
         self._stop_event.wait()
 
         self._socket.shutdown(socket.SHUT_RDWR)
-        self._sender.join(timeout=5)
-        self._receiver.join(timeout=5)
+        self._sender.join(timeout=3)
+        self._receiver.join(timeout=3)
 
         self._socket.close()
         Debug.log("UDP socket stopped.")
