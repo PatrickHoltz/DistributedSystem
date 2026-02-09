@@ -282,6 +282,7 @@ class MulticasterProcess(Process):
                         msg = MulticastMessagePacket.from_packet(msg)
                         if msg is not None:
                             self._on_receive(msg)
+                            self._clear_hold_back_queue(msg.sender_uuid)
 
                     case MulticastRequestMissingPacket.TYPE_ID:
                         msg = MulticastRequestMissingPacket.from_packet(msg)
@@ -298,8 +299,6 @@ class MulticasterProcess(Process):
             self._received_tracker[msg.sender_uuid.hex] = msg.sequence_id + 1
 
             self._basic_deliver(msg)
-
-            self._clear_hold_back_queue(msg.sender_uuid)
 
         elif msg.sequence_id > tracker:
             missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
@@ -349,19 +348,22 @@ class MulticasterProcess(Process):
         self.out_queue.put_nowait(msg_str)
 
     def _clear_hold_back_queue(self, sender_uuid: UUID):
-        tracker = self._received_tracker.get(sender_uuid.hex)
-        next_msg = None
-        for msg in self._hold_back_queue:
-            if msg.sender_uuid != sender_uuid:
-                continue
+        while len(self._hold_back_queue) > 0:
+            tracker = self._received_tracker.get(sender_uuid.hex)
+            next_msg = None
+            for msg in self._hold_back_queue:
+                if msg.sender_uuid != sender_uuid:
+                    continue
 
-            if msg.sequence_id == tracker:
-                next_msg = msg
+                if msg.sequence_id == tracker:
+                    next_msg = msg
+                    break
+
+            if next_msg is not None:
+                self._hold_back_queue.remove(next_msg)
+                self._on_receive(next_msg)
+            else:
                 break
-
-        if next_msg is not None:
-            self._hold_back_queue.remove(next_msg)
-            self._on_receive(next_msg)
 
 class Multicaster:
     """Class for sending and receiving reliably ordered (FIFO) multicasts"""
