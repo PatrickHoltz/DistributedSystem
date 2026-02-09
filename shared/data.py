@@ -78,7 +78,15 @@ class OkMessage:
 class CoordinatorMessage:
     leader_uuid: str
     leader_ip: str
-    leader_port: int
+    leader_port: int    
+
+@dataclass
+class ServerInfo:
+    server_uuid: str
+    occupancy: int
+    ip: str
+    udp_port: int
+    tcp_port: int
 
 @dataclass
 class ServerInfo:

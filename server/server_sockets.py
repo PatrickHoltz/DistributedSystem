@@ -41,7 +41,16 @@ class TCPListener(TCPConnection, Thread):
             except socket.timeout:
                 continue
 
-            packet = SocketUtils.recv_packet(client_sock)
+            try:
+                client_sock.settimeout(5.0)
+
+                packet = SocketUtils.recv_packet(client_sock)
+            except (ConnectionError, OSError, socket.timeout):
+                try:
+                    client_sock.close()
+                except OSError:
+                    pass
+                continue
 
             if packet.tag == PacketTag.LOGIN:
                 login_data = LoginData(**packet.content)
@@ -60,8 +69,10 @@ class ServerUDPSocket(Thread):
     Responsible for sending UDP unicasts and broadcasts and receiving UDP unicasts.
     """
 
-    def __init__(self, connection_manager: ConnectionManager, stop_event = mp.Event()):
+    def __init__(self, connection_manager: ConnectionManager, stop_event = None):
         super().__init__(daemon=True)
+        if stop_event is None:
+            stop_event = mp.Event()
         self._connection_manager = connection_manager
         self.udp_socket: Optional[UDPSocket] = UDPSocket(stop_event)
         self.stop_event = stop_event

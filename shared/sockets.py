@@ -24,7 +24,7 @@ class SocketUtils:
 
     @classmethod
     def recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
-        """Receives exactly n bytes from the given connection. By default blocks until the data is received.
+        """Receives exactly n bytes from the given connection. By default, blocks until the data is received.
         If a timeout is set and the data is not available, a timeout error is raised.
         """
         old_timeout = conn.gettimeout()
@@ -115,9 +115,9 @@ class UDPSocket(mp.Process):
     Socket to unicast and broadcast UDP packets and receive unicast packets.
     """
 
-    def __init__(self, stop_event = mp.Event()):
+    def __init__(self, stop_event=None):
         super().__init__()
-        self._stop_event = stop_event
+        self._stop_event = mp.Event() if stop_event is None else stop_event
         self.buffer_size: int = 65507
 
         self._sender: Optional[Thread] = None
@@ -135,7 +135,6 @@ class UDPSocket(mp.Process):
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         # let OS decide port, therefore no broadcast can be received
         self._socket.bind(("", 0))
-        self._socket.settimeout(2.0)
 
         assigned_port = self._socket.getsockname()[1]
         self.port_queue.put(assigned_port)
@@ -153,6 +152,7 @@ class UDPSocket(mp.Process):
 
         self._stop_event.wait()
 
+        self._socket.shutdown(socket.SHUT_RDWR)
         self._sender.join(timeout=5)
         self._receiver.join(timeout=5)
 
@@ -256,10 +256,9 @@ class BroadcastListener(Thread):
             on_message: Callable[[Packet, Address], None] = None,
             buffer_size: int = 65507,
             server_uuid: int = -1,
-            stop_event = mp.Event()
+            stop_event = None
     ):
         super().__init__(daemon=True)
-
         if on_message is None:
             raise ValueError("on_message cant be null.")
         if not callable(on_message):
@@ -270,7 +269,7 @@ class BroadcastListener(Thread):
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
-        self._stop_event = stop_event
+        self._stop_event = mp.Event() if stop_event is None else stop_event
         self.latest_uuids = deque(["" for _ in range(100)])
 
         self.port_queue = mp.Queue()
@@ -333,13 +332,13 @@ class TCPConnection:
     T = TypeVar('T')
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
-    def __init__(self, recv_queue: mp.Queue, stop_event = mp.Event()):
+    def __init__(self, recv_queue: mp.Queue, stop_event = None):
         super().__init__()
 
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
 
-        self._stop_event = stop_event
+        self._stop_event = mp.Event() if stop_event is None else stop_event
 
         self.socket: Optional[socket.socket] = None
 
@@ -396,7 +395,11 @@ class TCPConnection:
             try:
                 packet = SocketUtils.recv_packet(conn)
                 self._handle_packet(packet)
-            except (ConnectionError, OSError):
+
+            except socket.timeout:
+                continue
+
+            except (ConnectionError, OSError) as e:
                 try:
                     conn.close()
                 except OSError:
@@ -477,6 +480,6 @@ class TCPServerConnection(TCPConnection, Thread):
         sender.start()
         receiver.start()
         sender.join()
-        sender.join()
+        receiver.join()
 
         self.socket.close()

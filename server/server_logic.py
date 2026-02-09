@@ -241,7 +241,7 @@ class ConnectionManager:
         self.last_seen.pop(username, None)
         self.server_loop.game_state_manager.logout_player(username)
 
-        self.server_info.occupancy += 1
+        self.server_info.occupancy -= 1
 
     def mark_seen(self, username: str):
         self.last_seen[username] = time.monotonic()

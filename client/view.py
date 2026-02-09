@@ -29,6 +29,8 @@ class PlayerApp:
         self.dispatcher = dispatcher
         self.current_frame: Optional[CTkFrame] = None
 
+        self.username: str = ""
+
         self._setup()
 
     def _setup(self):
@@ -114,6 +116,7 @@ class LoginPage(ctk.CTkFrame):
 
     def login(self):
         username = self.username_input.get()
+        self.app.username = username
         self.login_button.configure(state="disabled")
         self.app.dispatcher.emit(Events.LOGIN_CLICKED, username)
 
@@ -167,8 +170,8 @@ class GamePage(ctk.CTkFrame):
         top_bar = ctk.CTkFrame(self, bg_color="transparent", fg_color="transparent", height=40)
         top_bar.pack(fill='x')
 
-        self.level_label = ctk.CTkLabel(top_bar, text=f"Level: {1}", font=("Lucida Sans", 16))
-        self.level_label.pack(side="left", padx=10, pady=5)
+        self.name_label = ctk.CTkLabel(top_bar, text=f"Name: " , font=("Lucida Sans", 16))
+        self.name_label.pack(side="left", padx=10, pady=5)
 
         self.players_label = ctk.CTkLabel(top_bar, text=f"Players: {1000}", font=("Lucida Sans", 16))
         self.players_label.pack(side="right", padx=10, pady=5)
@@ -192,7 +195,7 @@ class GamePage(ctk.CTkFrame):
         if self.monster_defeated:
             return
 
-        self.level_label.configure(text=f"Level: {game_state.player.level}")
+        self.name_label.configure(text=f"Name: {game_state.player.username}")
         self.players_label.configure(text=f"Players: {game_state.player_count}")
         self.monster_name_label.configure(text=game_state.monster.name)
         self._update_health_bar(game_state.monster.health, game_state.monster.max_health)
@@ -247,6 +250,9 @@ class GamePage(ctk.CTkFrame):
 
     def on_show(self):
         """Called when GamePage becomes visible. Bind the space key at root level."""
+        username = getattr(self.app, "username", "") or "-"
+        self.name_label.configure(text=f"Name: {username}")
+
         try:
             # bind at root so the event is handled regardless of widget focus
             self.root.bind_all("<space>", lambda e: self._on_attack_input())

@@ -434,6 +434,8 @@ class ServerLoop:
     def on_coordinator_timeout(self):
         """Timeout callback for when no coordinator message was received after a bully ok"""
         Debug.log("Coordinator timeout. Restarting election.")
+        with self._election_lock:
+            self.election_in_progress = False
         self._try_start_election()
 
     def _accept_leader(self, leader_info: ServerInfo):
