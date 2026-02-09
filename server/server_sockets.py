@@ -70,8 +70,10 @@ class ServerUDPSocket(Thread):
     Use methods from the udp_socket field to send packets.
     """
 
-    def __init__(self, connection_manager: ConnectionManager, stop_event = mp.Event()):
+    def __init__(self, connection_manager: ConnectionManager, stop_event = None):
         super().__init__(daemon=True)
+        if stop_event is None:
+            stop_event = mp.Event()
         self._connection_manager = connection_manager
         self.udp_socket: Optional[UDPSocket] = UDPSocket(stop_event)
         self.stop_event = stop_event

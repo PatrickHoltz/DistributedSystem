@@ -21,8 +21,6 @@ from shared.utils import Debug
 type Address = tuple[str, int]
 type AddressedPacket = tuple[Packet, Address]
 
-print("USING shared/sockets.py FROM:", __file__)
-
 class SocketUtils:
     T = TypeVar('T')
 
@@ -123,8 +121,10 @@ class UDPSocket(mp.Process):
     Socket to unicast and broadcast UDP packets and receive unicast packets.
     """
 
-    def __init__(self, stop_event = mp.Event()):
+    def __init__(self, stop_event=None):
         super().__init__()
+        if stop_event is None:
+            stop_event = mp.Event()
         self._stop_event = stop_event
         self.buffer_size: int = 65507
 
@@ -271,9 +271,11 @@ class BroadcastListener(Thread):
             on_message: Callable[[Packet, Address], None] = None,
             buffer_size: int = 65507,
             server_uuid: int = -1,
-            stop_event = mp.Event()
+            stop_event = None
     ):
         super().__init__(daemon=True)
+        if stop_event is None:
+            stop_event = threading.Event()
 
         if on_message is None:
             raise ValueError("on_message cant be null.")
