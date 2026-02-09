@@ -58,7 +58,6 @@ class TCPListener(TCPConnection, Thread):
 class ServerUDPSocket(Thread):
     """
     Responsible for sending UDP unicasts and broadcasts and receiving UDP unicasts.
-    Use methods from the udp_socket field to send packets.
     """
 
     def __init__(self, connection_manager: ConnectionManager, stop_event = mp.Event()):

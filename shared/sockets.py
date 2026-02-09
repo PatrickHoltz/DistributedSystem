@@ -1,18 +1,17 @@
 """This module contains classes for sending packets in different forms."""
-import dataclasses
+import ipaddress
 import json
 import multiprocessing as mp
 import queue
+import signal
 import socket
 import struct
+import subprocess
 import time
 from collections import deque
 from concurrent.futures import Future
-import signal
-from threading import Thread, Event
+from threading import Thread
 from typing import Optional, Callable, TypeVar, Type
-import subprocess
-import ipaddress
 
 from shared.packet import Packet
 from shared.utils import Debug
@@ -250,13 +249,6 @@ class BroadcastSocket(Thread):
                     self.future.set_result(None)
         finally:
             udp_socket.close()
-
-    @classmethod
-    def calculate_broadcast(cls, ip, mask):
-        ip_int = struct.unpack("!I", socket.inet_aton(ip))[0]
-        mask_int = struct.unpack("!I", socket.inet_aton(mask))[0]
-        broadcast_int = ip_int | (~mask_int & 0xFFFFFFFF)
-        return socket.inet_ntoa(struct.pack("!I", broadcast_int))
 
 
 class BroadcastListener(Thread):

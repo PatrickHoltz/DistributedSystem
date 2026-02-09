@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import threading
-from typing import Optional, override
+from typing import Optional
 
 from client.events import UIEventDispatcher, Events
 from model import ClientGameState
 from shared.data import *
-from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
 from shared.packet import PacketTag, Packet
+from shared.sockets import BroadcastSocket, TCPClientConnection, SocketUtils
 from shared.utils import Debug
 
 

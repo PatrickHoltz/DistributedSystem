@@ -270,7 +270,7 @@ class ConnectionManager:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
         match packet.tag:
             case PacketTag.GOSSIP_PLAYER_STATS | PacketTag.GOSSIP_MONSTER_SYNC:
-                self.server_loop.handle_gossip_message(packet, address)
+                self.server_loop.handle_gossip_message(packet)
             case PacketTag.LOGIN:
                 self._handle_login(packet, address)
             case PacketTag.BULLY_ELECTION | PacketTag.BULLY_COORDINATOR | PacketTag.BULLY_LEADER_HEARTBEAT:

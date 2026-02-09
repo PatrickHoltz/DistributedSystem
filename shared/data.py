@@ -7,7 +7,6 @@ class PlayerData:
     level: int
     online: bool
     last_seen_ts: float = 0.0
-    #damageDone: int
 
 @dataclass
 class MonsterData:
