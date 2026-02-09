@@ -41,7 +41,16 @@ class TCPListener(TCPConnection, Thread):
             except socket.timeout:
                 continue
 
-            packet = SocketUtils.recv_packet(client_sock)
+            try:
+                client_sock.settimeout(5.0)
+
+                packet = SocketUtils.recv_packet(client_sock)
+            except (ConnectionError, OSError, socket.timeout):
+                try:
+                    client_sock.close()
+                except OSError:
+                    pass
+                continue
 
             if packet.tag == PacketTag.LOGIN:
                 login_data = LoginData(**packet.content)

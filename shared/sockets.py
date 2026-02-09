@@ -5,6 +5,7 @@ import multiprocessing as mp
 import queue
 import socket
 import struct
+import threading
 import time
 from collections import deque
 from concurrent.futures import Future
@@ -19,6 +20,8 @@ from shared.utils import Debug
 
 type Address = tuple[str, int]
 type AddressedPacket = tuple[Packet, Address]
+
+print("USING shared/sockets.py FROM:", __file__)
 
 class SocketUtils:
     T = TypeVar('T')
@@ -345,12 +348,14 @@ class TCPConnection:
     T = TypeVar('T')
 
     # backlog wie viele verbindungsversuche gleichzeitig in der warteschlange sein dürfen
-    def __init__(self, recv_queue: mp.Queue, stop_event = mp.Event()):
+    def __init__(self, recv_queue: mp.Queue, stop_event = None):
         super().__init__()
 
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
 
+        if stop_event is None:
+            stop_event = threading.Event()
         self._stop_event = stop_event
 
         self.socket: Optional[socket.socket] = None
@@ -408,7 +413,11 @@ class TCPConnection:
             try:
                 packet = SocketUtils.recv_packet(conn)
                 self._handle_packet(packet)
-            except (ConnectionError, OSError):
+
+            except socket.timeout:
+                continue
+
+            except (ConnectionError, OSError) as e:
                 try:
                     conn.close()
                 except OSError:
@@ -489,6 +498,6 @@ class TCPServerConnection(TCPConnection, Thread):
         sender.start()
         receiver.start()
         sender.join()
-        sender.join()
+        receiver.join()
 
         self.socket.close()
