@@ -15,14 +15,14 @@
     - [x] Send initial game state
     - [ ] Store player in database
       - [ ] Perform **gossip algorithm**
-  - [ ] Aggregate client data (damage dealt)
+  - [x] Aggregate client data (damage dealt)
   - [x] Disconnect timed out clients
 - [ ] Sync game state
-  - [ ] Tick system
-  - [ ] Multicast aggregated data
-    - [ ] Perform reliable multicast
-  - [ ] Handle incoming data
-  - [ ] Handle leader death
+  - [x] Tick system
+  - [x] Multicast aggregated data
+    - [x] Perform reliable multicast
+  - [x] Handle incoming data
+  - [x] Handle leader death
   - [ ] *Check which failure modes we want to support*
 - [ ] Handle leader role
   - [x] Assign new clients
