@@ -213,6 +213,7 @@ class ServerLoop:
     def stop(self):
         self._is_stopped = True
         self.stop_event.set()
+        self.multicaster.stop()
         self.connection_manager.udp_socket.join()
         if self._heartbeat:
             self._heartbeat.stop()
@@ -232,8 +233,6 @@ class ServerLoop:
         self.connection_manager.server_view = filtered_view
         if len(filtered_view) != old_len:
             Debug.log(f"Server view size shrunk to {len(filtered_view)}", "LEADER")
-
-
 
     def deliver_packet_to_clients(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""

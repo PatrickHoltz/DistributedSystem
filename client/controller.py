@@ -136,6 +136,12 @@ class ConnectionService(TCPClientConnection):
             Debug.log("Login failed.")
             self.dispatcher.emit(Events.LOGIN_FAILED)
 
+    def stop(self):
+        if self.server_timeout_timer:
+            self.server_timeout_timer.cancel()
+            self.server_timeout_timer = None
+        super().stop()
+
 
 class GameController:
     def __init__(self, client_game_state: ClientGameState, dispatcher: UIEventDispatcher):
@@ -172,6 +178,9 @@ class GameController:
     def on_logout_clicked(self):
         if self._connection_service:
             self._connection_service.send_logout()
+            self._connection_service.stop()
+            self._connection_service = None
+
         self.client_game_state.player.logged_in = False
         self.dispatcher.emit(Events.LOGGED_OUT)
 

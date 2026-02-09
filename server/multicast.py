@@ -1,12 +1,14 @@
 """Provides everything needed for multicasting messages"""
 import json
 import random
+import signal
 import socket
 import struct
 
 from dataclasses import dataclass
 from logging import warning
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Event
+from queue import Empty
 from threading import Thread, Lock
 from typing import Callable
 from uuid import UUID
@@ -107,14 +109,15 @@ class MulticastReceiver(Thread):
     msg_queue: list[MulticastPacket]
     lock: Lock
 
-    def __init__(self, group: str, port: int) -> None:
-        super().__init__(daemon=True)
+    def __init__(self, group: str, port: int, stop_event: Event) -> None:
+        super().__init__(daemon=True, name='MulticastReceiver')
 
         self.msg_queue = []
         self.lock = Lock()
 
         self.group = group
         self.port = port
+        self._stop_event = stop_event
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -123,9 +126,15 @@ class MulticastReceiver(Thread):
     def run(self) -> None:
         config = struct.pack("4sl", socket.inet_aton(self.group), socket.INADDR_ANY)
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
+        self.socket.settimeout(1)
 
-        while True:
-            data = self.socket.recv(MulticastPacket.FIX_SIZE)
+        while not self._stop_event.is_set():
+            data: bytes
+            try:
+                data = self.socket.recv(MulticastPacket.FIX_SIZE)
+            except socket.timeout:
+                continue
+            
             msg = MulticastPacket.unpack(data)
 
             with self.lock:
@@ -152,20 +161,21 @@ class MulticastSender(Thread):
     msg_queue: list[MulticastPacket]
     lock: Lock
 
-    def __init__(self, group: str, port: int) -> None:
-        super().__init__(daemon=True)
+    def __init__(self, group: str, port: int, stop_event: Event) -> None:
+        super().__init__(daemon=True, name='MulticastSender')
 
         self.msg_queue = []
         self.lock = Lock()
 
         self.group = group
         self.port = port
+        self._stop_event = stop_event
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.MULTICAST_TTL)
 
     def run(self) -> None:
-        while True:
+        while not self._stop_event.is_set():
             if len(self.msg_queue) > 0:
                 with self.lock:
                     msg = self.msg_queue.pop()
@@ -213,27 +223,43 @@ class MulticasterProcess(Process):
         self._received_tracker = {}
         self._hold_back_queue = []
         self._received_msgs = {}
+        
+        self._stop_event = Event()
 
     def run(self) -> None:
-        self._sender = MulticastSender(self.group, self.PORT)
-        self._receiver = MulticastReceiver(self.group, self.PORT)
+        # needed to stop stdlib crashing on SIGINT
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        
+        self._sender = MulticastSender(self.group, self.PORT, self._stop_event)
+        self._receiver = MulticastReceiver(self.group, self.PORT, self._stop_event)
         self._receive_handler = Thread(target=self._receive_loop, args=())
 
         self._sender.start()
         self._receiver.start()
         self._receive_handler.start()
 
-        while True:
-            msg_str = self.in_queue.get()
+        while not self._stop_event.is_set():
+            msg_str: str = ""
+            try:
+                msg_str = self.in_queue.get(timeout=1)
+            except Empty:
+                continue
             
             if self.LOGGING:
                 with open(f"multicast_log-{self.uuid}.txt", "a") as f:
                     f.write(f"Sending package: {msg_str}\n")
             
             self._reliable_multicast(msg_str)
+        
+        self._sender.join()
+        self._receiver.join()
+        self._receive_handler.join()
+    
+    def stop(self) -> None:
+        self._stop_event.set()
 
     def _receive_loop(self):
-        while True:
+        while not self._stop_event.is_set():
             if self._receiver.has_msgs():
                 msg = self._receiver.get()
                 if msg is None:
@@ -351,6 +377,12 @@ class Multicaster:
 
         #self._receive_handler.start()
         self._multicaster_process.start()
+
+    def stop(self) -> None:
+        self._multicaster_process.stop()
+        self._multicaster_process.join()
+        self._multicaster_process.close()
+        Debug.log("Multicaster process stopped.")
 
     def cast_msg(self, msg: str) -> None:
         """Multicasts the message to the group"""
