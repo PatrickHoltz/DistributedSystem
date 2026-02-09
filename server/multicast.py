@@ -4,6 +4,7 @@ import random
 import signal
 import socket
 import struct
+import time
 
 from dataclasses import dataclass
 from logging import warning
@@ -72,7 +73,7 @@ class MulticastMessagePacket(MulticastPacket):
             return None
 
         data = json.loads(packet._raw_content)
-        return MulticastMessagePacket(packet.sender_uuid, data['msg_sequence_id'], data['msg_content'])
+        return cls(packet.sender_uuid, data['msg_sequence_id'], data['msg_content'])
 
 class MulticastRequestMissingPacket(MulticastPacket):
     """Contains all the data for requesting a missed message"""
@@ -101,7 +102,32 @@ class MulticastRequestMissingPacket(MulticastPacket):
         data = json.loads(packet._raw_content)
         uuid = UUID(hex=data['msg_sender_uuid'])
         sequence_id = data['msg_sequence_id']
-        return MulticastRequestMissingPacket(packet.sender_uuid, uuid, sequence_id)
+        return cls(packet.sender_uuid, uuid, sequence_id)
+
+class MulticastHeartbeatPacket(MulticastPacket):
+    """Contains all the data for a heartbeat"""
+
+    heartbeat_id: int
+
+    TYPE_ID = 1337
+
+    def __init__(self, own_uuid: UUID, heartbeat_id: int):
+        data = {
+            "heartbeat_id": heartbeat_id,
+        }
+        MulticastPacket.__init__(self, self.TYPE_ID, own_uuid, json.dumps(data))
+
+        self.heartbeat_id = heartbeat_id
+
+    @classmethod
+    def from_packet(cls, packet: MulticastPacket) -> 'MulticastHeartbeatPacket | None':
+        if packet.type_id != cls.TYPE_ID:
+            warning(f"MulticastPacket type id does not match {cls.__class__.__name__}! (actual id: {packet.type_id})")
+            return None
+
+        data = json.loads(packet._raw_content)
+        heartbeat_id = data['heartbeat_id']
+        return cls(packet.sender_uuid, heartbeat_id)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
@@ -194,6 +220,8 @@ class MulticasterProcess(Process):
     LOGGING = False
     OMISSION_CHANCE = 0
 
+    HEARTBEAT_INTERVAL = 3
+
     group: str
     uuid: UUID
 
@@ -209,6 +237,10 @@ class MulticasterProcess(Process):
 
     _hold_back_queue: list[MulticastMessagePacket]
     _received_msgs: dict[tuple[UUID, int], MulticastMessagePacket]
+    
+    _heartbeat_stamps: dict[str, tuple[int, float]]
+    _next_heartbeat: float
+    _heartbeat_id: int
 
     def __init__(self, group: str, uuid: UUID) -> None:
         super().__init__(daemon=False, name=f"Multicaster ({group})")
@@ -223,6 +255,10 @@ class MulticasterProcess(Process):
         self._received_tracker = {}
         self._hold_back_queue = []
         self._received_msgs = {}
+        
+        self._heartbeat_stamps = {}
+        self._next_heartbeat = time.monotonic() - self.HEARTBEAT_INTERVAL
+        self._heartbeat_id = 1
         
         self._stop_event = Event()
 
@@ -291,6 +327,36 @@ class MulticasterProcess(Process):
                             if key in self._received_msgs:
                                 stored_msgs = self._received_msgs[key]
                                 self._sender.send(stored_msgs)
+
+                    case MulticastHeartbeatPacket.TYPE_ID:
+                        msg = MulticastHeartbeatPacket.from_packet(msg)
+                        if msg is not None:
+                            last_id_seen = -1
+                            if msg.sender_uuid in self._heartbeat_stamps:
+                                last_id_seen, _ = self._heartbeat_stamps[msg.sender_uuid]
+
+                            if msg.heartbeat_id > last_id_seen:
+                                self._heartbeat_stamps[msg.sender_uuid] = (msg.heartbeat_id , time.monotonic())
+            
+            # send heartbeat if time and filter out due servers
+            if time.monotonic() > self._next_heartbeat:
+                self._next_heartbeat = time.monotonic() + self.HEARTBEAT_INTERVAL
+                
+                hb = MulticastHeartbeatPacket(self.uuid, self._heartbeat_id)
+                self._heartbeat_id += 1
+                self._sender.send(hb)
+                
+                now = time.monotonic()
+                limit = 3 * self.HEARTBEAT_INTERVAL
+                timeouted = []
+                for uuid in self._heartbeat_stamps:
+                    _id, stamp = self._heartbeat_stamps[uuid]
+                    if now - stamp > limit:
+                        timeouted.append(uuid)
+                
+                for uuid in timeouted:
+                    del self._received_tracker[uuid.hex]
+                    del self._heartbeat_stamps[uuid]
 
     # basic multicast
     def _on_receive(self, msg: MulticastMessagePacket) -> None:
@@ -375,9 +441,6 @@ class Multicaster:
         self._multicaster_process = MulticasterProcess(group, uuid)
         self.on_msg_handler = on_msg_handler
 
-        #self._receive_handler = Thread(target=self._receive_loop, args=())
-
-        #self._receive_handler.start()
         self._multicaster_process.start()
 
     def stop(self) -> None:
