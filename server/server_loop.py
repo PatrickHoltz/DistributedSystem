@@ -118,7 +118,7 @@ class ServerLoop:
             self._update_game_states()
             self._send_outgoing_messages()
 
-            # self.connection_manager.tick_client_heartbeat(now)
+            self.connection_manager.tick_client_heartbeat(now)
 
             time.sleep(max(0, self.tick_rate - (time.time() - start_time)))
 

@@ -234,10 +234,10 @@ class ConnectionManager:
 
     def remove_connection(self, username: str):
         """Closes an active connection."""
-
         if username in self.active_connections:
             self.active_connections[username].stop()
             del self.active_connections[username]
+            
         self.last_seen.pop(username, None)
         self.server_loop.game_state_manager.logout_player(username)
 
@@ -263,8 +263,9 @@ class ConnectionManager:
                 to_drop.append(username)
 
         for username in to_drop:
-            print(f"Heartbeat timeout: {username}")
+            Debug.log(f"Heartbeat timeout for '{username}'", "SERVER")
             self.remove_connection(username)
+            Debug.log(f"Player '{username}' forcefully logged out.", "SERVER")
 
     def handle_broadcast(self, packet: Packet, address: Address) -> None:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
