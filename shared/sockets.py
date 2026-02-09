@@ -24,7 +24,7 @@ class SocketUtils:
 
     @classmethod
     def recv_exact(cls, n_bytes: int, conn: socket.socket, timeout_s: float = None):
-        """Receives exactly n bytes from the given connection. By default blocks until the data is received.
+        """Receives exactly n bytes from the given connection. By default, blocks until the data is received.
         If a timeout is set and the data is not available, a timeout error is raised.
         """
         old_timeout = conn.gettimeout()
