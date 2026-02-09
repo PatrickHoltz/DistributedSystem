@@ -23,7 +23,7 @@
     - [x] Perform reliable multicast
   - [x] Handle incoming data
   - [x] Handle leader death
-  - [ ] *Check which failure modes we want to support*
+  - [x] *Check which failure modes we want to support*
 - [x] Handle leader role
   - [x] Assign new clients
   - [x] Handle server failure
