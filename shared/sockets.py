@@ -139,7 +139,6 @@ class UDPSocket(mp.Process):
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         # let OS decide port, therefore no broadcast can be received
         self._socket.bind(("", 0))
-        self._socket.settimeout(2.0)
 
         assigned_port = self._socket.getsockname()[1]
         self.port_queue.put(assigned_port)
@@ -157,6 +156,7 @@ class UDPSocket(mp.Process):
 
         self._stop_event.wait()
 
+        self._socket.shutdown(socket.SHUT_RDWR)
         self._sender.join(timeout=5)
         self._receiver.join(timeout=5)
 
