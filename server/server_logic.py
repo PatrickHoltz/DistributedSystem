@@ -17,7 +17,6 @@ from shared.utils import Debug
 if TYPE_CHECKING:
     from server_loop import ServerLoop   # only imported for type checkers
 
-
 class GameStateManager:
     """Manager of the overall game state."""
     base_damage = 10
@@ -26,6 +25,7 @@ class GameStateManager:
     def __init__(self):
         self._game_state = GameStateData(players={}, monster=self._create_monster(1))
         self.latest_damage_numbers: list[int] = []
+        self.overall_dmg = 0
 
     def touch_player(self, username: str):
         """Update last_seen_ts for TTL-online"""
@@ -88,20 +88,23 @@ class GameStateManager:
         return MonsterData(name=f"Alien {stage}", stage=stage, health=health, max_health=health)
 
     def apply_attack(self, username: str):
-        """Applies an attack from the given player to the current monster. Advances the monster stage if the monster is defeated.
-        Returns True if the monster is defeated afterward, False otherwise.
+        """Applies an attack from the given player to the current monster. Returns the damage dealt to the monster.
         """
-        if username in self._game_state.players:
-            damage = self._game_state.players[username].damage
-            self._game_state.monster.health -= damage
-            self.latest_damage_numbers.append(damage)
-            return damage
-        return 0
+        if username not in self._game_state.players:
+            return 0
+        
+        damage = self._game_state.players[username].damage
+        self._game_state.monster.health -= damage
 
-    def _advance_monster_stage(self):
-        new_stage = self._game_state.monster.stage + 1
-        new_monster = self._create_monster(new_stage)
-        self._game_state.monster = new_monster
+        self.latest_damage_numbers.append(damage)
+        self.overall_dmg += damage
+        return damage
+        
+
+    def apply_attacks(self, damage: int) -> None:
+        """Set the health of the monster to the max healt minus the damage. 
+        Damage should be the sum og all damage from all servers."""
+        self._game_state.monster.health = self._game_state.monster.max_health - damage
 
     def set_monster_health(self, health: int ):
         """Sets the monster health. Only the leader should call this"""
@@ -111,13 +114,15 @@ class GameStateManager:
             health = self._game_state.monster.max_health
         self._game_state.monster.health = health
 
-    def advance_monster_stage(self):
+    def get_next_monster(self):
         """Only leader should call"""
-        self._advance_monster_stage()
+        next_stage = self._game_state.monster.stage + 1
+        return self._create_monster(next_stage)
 
     def set_monster(self, monster: MonsterData):
         """Follower takes monster from leader"""
         self._game_state.monster = monster
+        self.overall_dmg = 0
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online."""
@@ -151,6 +156,7 @@ class GameStateManager:
 
     def get_monster(self) -> MonsterData:
         return self._game_state.monster
+
     def get_online_player_count(self) -> int:
         self._refresh_online_flags()
         online_players = [p for p in self._game_state.players.values() if p.online]
@@ -177,15 +183,12 @@ class ConnectionManager:
             server_uuid=UUID(server_uuid).int,
             stop_event=server_loop.stop_event,
         )
-        self.broadcast_listener.start()
 
         # handles regular login requests to the assigned server
         self.client_listener = TCPListener(self, server_loop.stop_event)
-        self.client_listener.start()
 
         # handles incoming udp unicast packets and sends unicast / broadcast
         self.udp_socket = ServerUDPSocket(self, server_loop.stop_event)
-        self.udp_socket.start()
 
         # wait until the listeners obtained the listener addresses
         self.udp_listen_port = self.udp_socket.get_port()
@@ -193,7 +196,10 @@ class ConnectionManager:
 
         self.server_info = ServerInfo(server_uuid, 0, SocketUtils.local_ip, self.udp_listen_port, self.tcp_listener_port)
         Debug.log(f"IP: {self.server_info.ip}, UDP port: {self.server_info.udp_port}, TCP port: {self.server_info.tcp_port}")
-
+        
+        self.broadcast_listener.start()
+        self.client_listener.start()
+        self.udp_socket.start()
 
     def _assign_client(self) -> ServerInfo:
         """Returns the server info of the server which is occupied least"""
@@ -248,7 +254,7 @@ class ConnectionManager:
         """
         if now >= self._next_client_ping:
             self._next_client_ping += self.CLIENT_HEARTBEAT_INTERVAL
-            self.server_loop.multicast_packet(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
+            self.server_loop.deliver_packet_to_clients(Packet(StringMessage("ping"), tag=PacketTag.CLIENT_PING))
 
         to_drop = []
         for username in list(self.active_connections.keys()):

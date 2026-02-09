@@ -2,10 +2,16 @@ import multiprocessing as mp
 import random
 import threading
 import time
-from threading import Lock, Timer
+import json
+import random
+
 from typing import Optional
+from dataclasses import asdict
+
+from threading import Lock, Timer
 from uuid import UUID, uuid4
 
+from multicast import Multicaster
 from server.server_sockets import Heartbeat
 from server_logic import ConnectionManager, GameStateManager
 from shared.data import *
@@ -45,7 +51,7 @@ class ServerLoop:
         self._is_stopped = False
         self.in_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
         self.out_queue: mp.Queue[tuple[str, Packet]] = mp.Queue()
-        self.tick_rate = 0.1  # ticks per second
+        self.tick_rate = 0.2  # seconds between ticks
 
         self.leader_info: ServerInfo | None = None
         self.is_leader: bool = False
@@ -56,9 +62,6 @@ class ServerLoop:
 
         self._next_hb = time.monotonic() + self.BULLY_HEARTBEAT_INTERVAL
         self._last_leader_seen = time.monotonic()
-
-        self._gossip_lock = Lock()
-        self.monster_id: str = str(uuid4())
 
         self._stats_seq: int = 0
         self._last_stats_seq_by_server: dict[str, int] = {}
@@ -73,6 +76,10 @@ class ServerLoop:
         self.bully_heartbeat_timer: Timer | None = None
 
         self.connection_manager = ConnectionManager(self, self.server_uuid)
+        
+        self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
+        self.damage_tracker = {}
+        
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
 
@@ -80,6 +87,7 @@ class ServerLoop:
         self._restart_leader_heartbeat_timer()
 
         while not self._is_stopped:
+            start_time = time.time()
             now = time.monotonic()
 
             self._filter_server_view()
@@ -88,6 +96,16 @@ class ServerLoop:
             self.game_state_manager.latest_damage_numbers = []
 
             self._process_incoming_messages()
+            
+            # multicast aggregated damage to other servers
+            # note: needs to be befor _leader_apply_monster_progress
+            self.multicaster.cast_msg(json.dumps({
+                "type": "dmg",
+                "uuid": self.server_uuid,
+                "stage": self.game_state_manager.get_monster().stage,
+                "damage": self.game_state_manager.overall_dmg,
+            }))
+            self.multicaster.empty_msg_queue()
 
             # Leader computes monster HP/stage based on merged damage counters
             self._leader_apply_monster_progress()
@@ -97,16 +115,12 @@ class ServerLoop:
                 self._next_gossip_stats += self.GOSSIP_PLAYER_STATS_INTERVAL
                 self._broadcast_player_stats()
 
-            if self.is_leader and now >= self._next_monster_sync:
-                self._next_monster_sync += self.GOSSIP_MONSTER_SYNC_INTERVAL
-                self._broadcast_monster_sync()
-
             self._update_game_states()
             self._send_outgoing_messages()
 
             # self.connection_manager.tick_client_heartbeat(now)
 
-            time.sleep(self.tick_rate)
+            time.sleep(max(0, self.tick_rate - (time.time() - start_time)))
 
     def handle_gossip_message(self, packet: Packet, address: tuple[str, int]):
         match packet.tag:
@@ -127,40 +141,6 @@ class ServerLoop:
                 self.game_state_manager.merge_player_stats(players)
                 return None
 
-            case PacketTag.GOSSIP_MONSTER_SYNC:
-                sync_leader = packet.content.get("leader_uuid")
-                if self.leader_info is not None and sync_leader != self.leader_info.server_uuid:
-                    return None
-
-                new_monster_id = packet.content.get("monster_id")
-                monster_dict = packet.content.get("monster")
-
-                if not new_monster_id or not isinstance(monster_dict, dict):
-                    return None
-
-                new_monster = MonsterData(**monster_dict)
-
-                with self._gossip_lock:
-                    monster_changed = (new_monster_id != self.monster_id)
-                    self.monster_id = new_monster_id
-                    self.game_state_manager.set_monster(new_monster)
-
-                    if monster_changed:
-                        self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
-                        pass
-                return None
-
-            case PacketTag.ATTACK:
-                if not self.is_leader:
-                    return None
-
-                damage = packet.content.get("damage")
-                if damage and isinstance(damage, (int, float)) and damage > 0:
-                    with self._gossip_lock:
-                        monster = self.game_state_manager.get_monster()
-                        self.game_state_manager.set_monster_health(monster.health - int(damage))
-                return None
-
             case _:
                 return None
 
@@ -172,30 +152,63 @@ class ServerLoop:
         pkt = Packet(msg, tag=PacketTag.GOSSIP_PLAYER_STATS, server_uuid=UUID(self.server_uuid).int)
         self.connection_manager.udp_socket.broadcast(pkt, 2)
 
-    def _broadcast_monster_sync(self):
-        if not self.is_leader:
-            return
-        monster = self.game_state_manager.get_monster()
-        msg = GossipMonsterSync(monster_id=self.monster_id, leader_uuid=self.server_uuid, monster=monster)
-        pkt = Packet(msg, tag=PacketTag.GOSSIP_MONSTER_SYNC, server_uuid=UUID(self.server_uuid).int)
-        self.connection_manager.udp_socket.broadcast(pkt, 2)
-
     def _leader_apply_monster_progress(self):
         """Leader-only: if monster is dead, advance stage and announce a new monster_id"""
         if not self.is_leader:
             return
 
-        with self._gossip_lock:
-            monster = self.game_state_manager.get_monster()
-            if monster.health > 0:
-                return
+        monster = self.game_state_manager.get_monster()
+        if monster.health > 0:
+            return
 
-            self.game_state_manager.advance_monster_stage()
-            self.monster_id = str(uuid4())
+        new_monster = self.game_state_manager.get_next_monster()
+        self._set_monster(new_monster)
 
-            new_monster = self.game_state_manager.get_monster()
-            self.multicast_packet(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
-            self._broadcast_monster_sync()
+        self.multicaster.cast_msg(json.dumps({
+                "type": "monster",
+                "monster": asdict(new_monster),
+        }))
+        
+        self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
+
+    def _on_damage_multicast(self, msg: str):
+        data = json.loads(msg)
+        type = data['type']
+        
+        match type:
+            case 'dmg':
+                uuid = data['uuid']
+                damage = data['damage']
+                stage = data['stage']
+
+                if not stage or stage != self.game_state_manager.get_monster().stage:
+                    Debug.log(f"Ignoring stage {stage} mismatching own stage {self.game_state_manager.get_monster().stage}", "DMG SYNC")
+                    return
+
+                if uuid not in self.damage_tracker:
+                    self.damage_tracker[uuid] = 0
+
+                dif = damage - self.damage_tracker[uuid]
+
+                if dif > 0:
+                    #self.game_state_manager.apply_attack_from_other_server(dif)
+                    self.damage_tracker[uuid] = damage
+                    self.game_state_manager.latest_damage_numbers.append(dif)
+
+                    dmg_sum = self.game_state_manager.overall_dmg
+                    for _uuid, dmg in self.damage_tracker.items():
+                        dmg_sum += dmg
+
+                    self.game_state_manager.apply_attacks(dmg_sum)
+                    Debug.log(f"Damage sum: {dmg_sum}, Monster HP: {self.game_state_manager.get_monster().health}", "DMG SYNC")
+
+            case 'monster':
+                new_monster = MonsterData(**data['monster'])
+                Debug.log(f"New monster received: {new_monster}", "DMG SYNC")
+                
+                self._set_monster(new_monster)
+                
+                self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
     def stop(self):
         self._is_stopped = True
@@ -218,11 +231,11 @@ class ServerLoop:
         filtered_view = {k: v for k, v in self.connection_manager.server_view.items() if v.last_seen > now - self.SERVER_HEARTBEAT_TIMEOUT}
         self.connection_manager.server_view = filtered_view
         if len(filtered_view) != old_len:
-            print(f"Server view size shrunk to {len(filtered_view)}")
+            Debug.log(f"Server view size shrunk to {len(filtered_view)}", "LEADER")
 
 
 
-    def multicast_packet(self, packet: Packet):
+    def deliver_packet_to_clients(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""
         for username in self.connection_manager.active_connections.keys():
             self.out_queue.put((username, packet))
@@ -249,16 +262,7 @@ class ServerLoop:
                     self.out_queue.put((username, Packet(StringMessage("pong"), tag=PacketTag.CLIENT_PONG)))
 
                 case PacketTag.ATTACK:
-                    damage = self.game_state_manager.apply_attack(username)
-                    if damage > 0:
-                        if self.is_leader:
-                            with self._gossip_lock:
-                                monster = self.game_state_manager.get_monster()
-                                self.game_state_manager.set_monster_health(monster.health - int(damage))
-                        else:
-                            pkt = Packet({"damage": damage}, tag=PacketTag.ATTACK,
-                                         server_uuid=UUID(self.server_uuid).int)
-                            self.connection_manager.udp_socket.broadcast(pkt, 2)
+                    self.game_state_manager.apply_attack(username)
 
                 case PacketTag.LOGOUT:
                     self.connection_manager.remove_connection(username)
@@ -275,6 +279,10 @@ class ServerLoop:
                 communicator = self.connection_manager.active_connections[username]
                 communicator.send(packet)
             processed += 1
+
+    def _set_monster(self, new_monster: MonsterData) -> None:
+        self.game_state_manager.set_monster(new_monster)
+        self.damage_tracker = {}
 
     def _on_leader_heartbeat_timeout(self):
         """Timeout callback for when no leader heartbeat has been received in some time period."""
@@ -402,7 +410,8 @@ class ServerLoop:
         #         self._try_start_election()
 
     def _handle_bully_leader_heartbeat(self, packet: Packet):
-        leader_info = ServerInfo(**packet.content)
+        leader_heartbeat = LeaderHeartbeat.from_dict(packet.content)
+        leader_info = leader_heartbeat.server_info
 
         # if leader_uuid == self.server_uuid:
         #     return None
@@ -422,6 +431,9 @@ class ServerLoop:
         if self.leader_info is None or self.leader_info.server_uuid != leader_info.server_uuid:
             Debug.log(f"Received new leader heartbeat from <{leader_info.server_uuid}>", "SERVER", "BULLY")
             self._accept_leader(leader_info)
+            
+            # update current monster to monster state of leader
+            self._set_monster(leader_heartbeat.monster)
 
     def on_coordinator_timeout(self):
         """Timeout callback for when no coordinator message was received after a bully ok"""
@@ -494,8 +506,8 @@ class ServerLoop:
         """Returns the correct heartbeat packet depending on weather this server is the leader or not."""
         server_info = self.connection_manager.server_info
         if self.is_leader:
-            return Packet(server_info, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
-
+            packet = LeaderHeartbeat(server_info, self.game_state_manager.get_monster())
+            return Packet(packet, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
         else:
             return Packet(server_info, tag=PacketTag.SERVER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
 

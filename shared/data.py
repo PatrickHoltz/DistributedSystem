@@ -83,9 +83,15 @@ class CoordinatorMessage:
 
 @dataclass
 class LeaderHeartbeat:
-    leader_uuid: str
-    leader_ip: str
-    leader_port: int
+    server_info: ServerInfo
+    monster: MonsterData
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        server_data = ServerInfo(**data['server_info'])
+        monster_data = MonsterData(**data['monster'])
+        return cls(server_info=server_data, monster=monster_data)
+    
 
 @dataclass
 class ServerInfo:
@@ -105,20 +111,6 @@ class ClientInfo:
     username: str
     ip: str
     port: int
-
-@dataclass
-class GossipMonsterSync:
-    monster_id: str
-    leader_uuid: str
-    monster: MonsterData
-
-    @classmethod
-    def from_dict(cls, data: dict):
-        return cls(
-            monster_id=data["monster_id"],
-            leader_uuid=data["leader_uuid"],
-            monster=MonsterData(**data["monster"]),
-        )
 
 @dataclass
 class PlayerStats:
