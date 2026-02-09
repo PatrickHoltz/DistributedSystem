@@ -106,11 +106,6 @@ class GameStateManager:
         Damage should be the sum og all damage from all servers."""
         self._game_state.monster.health = self._game_state.monster.max_health - damage
 
-    def _advance_monster_stage(self):
-        new_stage = self._game_state.monster.stage + 1
-        new_monster = self._create_monster(new_stage)
-        self._game_state.monster = new_monster
-
     def set_monster_health(self, health: int ):
         """Sets the monster health. Only the leader should call this"""
         if health < 0:
@@ -119,10 +114,10 @@ class GameStateManager:
             health = self._game_state.monster.max_health
         self._game_state.monster.health = health
 
-    def advance_monster_stage(self):
+    def get_next_monster(self):
         """Only leader should call"""
-        self._advance_monster_stage()
-        self.overall_dmg = 0
+        next_stage = self._game_state.monster.stage + 1
+        return self._create_monster(next_stage)
 
     def set_monster(self, monster: MonsterData):
         """Follower takes monster from leader"""

@@ -161,10 +161,9 @@ class ServerLoop:
         if monster.health > 0:
             return
 
-        self.game_state_manager.advance_monster_stage()
-        self.damage_tracker = {}
+        new_monster = self.game_state_manager.get_next_monster()
+        self._set_monster(new_monster)
 
-        new_monster = self.game_state_manager.get_monster()
         self.multicaster.cast_msg(json.dumps({
                 "type": "monster",
                 "monster": asdict(new_monster),
@@ -207,8 +206,7 @@ class ServerLoop:
                 new_monster = MonsterData(**data['monster'])
                 print(f"NEW MONSTER: {new_monster}")
                 
-                self.game_state_manager.set_monster(new_monster)
-                self.damage_tracker = {}
+                self._set_monster(new_monster)
                 
                 self.deliver_packet_to_clients(Packet(new_monster, tag=PacketTag.NEW_MONSTER))
 
@@ -281,6 +279,10 @@ class ServerLoop:
                 communicator = self.connection_manager.active_connections[username]
                 communicator.send(packet)
             processed += 1
+
+    def _set_monster(self, new_monster: MonsterData) -> None:
+        self.game_state_manager.set_monster(new_monster)
+        self.damage_tracker = {}
 
     def _on_leader_heartbeat_timeout(self):
         """Timeout callback for when no leader heartbeat has been received in some time period."""
@@ -408,7 +410,8 @@ class ServerLoop:
         #         self._try_start_election()
 
     def _handle_bully_leader_heartbeat(self, packet: Packet):
-        leader_info = ServerInfo(**packet.content)
+        leader_heartbeat = LeaderHeartbeat.from_dict(packet.content)
+        leader_info = leader_heartbeat.server_info
 
         # if leader_uuid == self.server_uuid:
         #     return None
@@ -428,6 +431,9 @@ class ServerLoop:
         if self.leader_info is None or self.leader_info.server_uuid != leader_info.server_uuid:
             Debug.log(f"Received new leader heartbeat from <{leader_info.server_uuid}>", "SERVER", "BULLY")
             self._accept_leader(leader_info)
+            
+            # update current monster to monster state of leader
+            self._set_monster(leader_heartbeat.monster)
 
     def on_coordinator_timeout(self):
         """Timeout callback for when no coordinator message was received after a bully ok"""
@@ -500,8 +506,8 @@ class ServerLoop:
         """Returns the correct heartbeat packet depending on weather this server is the leader or not."""
         server_info = self.connection_manager.server_info
         if self.is_leader:
-            return Packet(server_info, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
-
+            packet = LeaderHeartbeat(server_info, self.game_state_manager.get_monster())
+            return Packet(packet, tag=PacketTag.BULLY_LEADER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
         else:
             return Packet(server_info, tag=PacketTag.SERVER_HEARTBEAT, server_uuid=UUID(server_info.server_uuid).int)
 
