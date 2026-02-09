@@ -82,6 +82,14 @@ class CoordinatorMessage:
     leader_port: int
 
 @dataclass
+class ServerInfo:
+    server_uuid: str
+    occupancy: int
+    ip: str
+    udp_port: int
+    tcp_port: int
+
+@dataclass
 class LeaderHeartbeat:
     server_info: ServerInfo
     monster: MonsterData
@@ -91,15 +99,6 @@ class LeaderHeartbeat:
         server_data = ServerInfo(**data['server_info'])
         monster_data = MonsterData(**data['monster'])
         return cls(server_info=server_data, monster=monster_data)
-    
-
-@dataclass
-class ServerInfo:
-    server_uuid: str
-    occupancy: int
-    ip: str
-    udp_port: int
-    tcp_port: int
 
 @dataclass
 class ServerState:
