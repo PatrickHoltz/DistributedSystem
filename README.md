@@ -9,22 +9,22 @@
     - [x] Start leader election
       - [x] Perform **bully algorithm** 
         - [x] *Check if our modification satisfies failure modes*
-- [ ] Handle clients
-  - [ ] Handle client assignment by leader
+- [x] Handle clients
+  - [x] Handle client assignment by leader
     - [x] Connect to client
     - [x] Send initial game state
     - [x] Store player in database
       - [x] Perform **gossip algorithm**
   - [x] Aggregate client data (damage dealt)
   - [x] Disconnect timed out clients
-- [ ] Sync game state
+- [x] Sync game state
   - [x] Tick system
   - [x] Multicast aggregated data
     - [x] Perform reliable multicast
   - [x] Handle incoming data
   - [x] Handle leader death
   - [ ] *Check which failure modes we want to support*
-- [ ] Handle leader role
+- [x] Handle leader role
   - [x] Assign new clients
   - [x] Handle server failure
     - [x] Reassign orphaned clients (clients reconnect by themselves)
