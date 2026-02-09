@@ -1,16 +1,14 @@
 """This module contains classes for sending packets in different forms."""
-import dataclasses
 import json
 import multiprocessing as mp
 import queue
 import socket
 import struct
-import threading
 import time
 from collections import deque
 from concurrent.futures import Future
 import signal
-from threading import Thread, Event
+from threading import Thread
 from typing import Optional, Callable, TypeVar, Type
 import subprocess
 import ipaddress
@@ -123,9 +121,7 @@ class UDPSocket(mp.Process):
 
     def __init__(self, stop_event=None):
         super().__init__()
-        if stop_event is None:
-            stop_event = mp.Event()
-        self._stop_event = stop_event
+        self._stop_event = mp.Event() if stop_event is None else stop_event
         self.buffer_size: int = 65507
 
         self._sender: Optional[Thread] = None
@@ -274,9 +270,6 @@ class BroadcastListener(Thread):
             stop_event = None
     ):
         super().__init__(daemon=True)
-        if stop_event is None:
-            stop_event = threading.Event()
-
         if on_message is None:
             raise ValueError("on_message cant be null.")
         if not callable(on_message):
@@ -287,7 +280,7 @@ class BroadcastListener(Thread):
         self.on_message = on_message
         self.buffer_size = buffer_size
         self.blocked_ports = []
-        self._stop_event = stop_event
+        self._stop_event = mp.Event() if stop_event is None else stop_event
         self.latest_uuids = deque(["" for _ in range(100)])
 
         self.port_queue = mp.Queue()
@@ -356,9 +349,7 @@ class TCPConnection:
         self._send_queue: mp.Queue[Packet] = mp.Queue()
         self._recv_queue: mp.Queue = recv_queue
 
-        if stop_event is None:
-            stop_event = threading.Event()
-        self._stop_event = stop_event
+        self._stop_event = mp.Event() if stop_event is None else stop_event
 
         self.socket: Optional[socket.socket] = None
 
