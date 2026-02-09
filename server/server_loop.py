@@ -182,7 +182,7 @@ class ServerLoop:
                 stage = data['stage']
 
                 if not stage or stage != self.game_state_manager.get_monster().stage:
-                    print(f"IGNORING STAGE {stage} != {self.game_state_manager.get_monster().stage}")
+                    Debug.log(f"Ignoring stage {stage} mismatching own stage {self.game_state_manager.get_monster().stage}", "DMG SYNC")
                     return
 
                 if uuid not in self.damage_tracker:
@@ -200,11 +200,11 @@ class ServerLoop:
                         dmg_sum += dmg
 
                     self.game_state_manager.apply_attacks(dmg_sum)
-                    print(f"DMG SUM: {dmg_sum}, Monster HP: {self.game_state_manager.get_monster().health}")
+                    Debug.log(f"Damage sum: {dmg_sum}, Monster HP: {self.game_state_manager.get_monster().health}", "DMG SYNC")
 
             case 'monster':
                 new_monster = MonsterData(**data['monster'])
-                print(f"NEW MONSTER: {new_monster}")
+                Debug.log(f"New monster received: {new_monster}", "DMG SYNC")
                 
                 self._set_monster(new_monster)
                 
@@ -231,7 +231,7 @@ class ServerLoop:
         filtered_view = {k: v for k, v in self.connection_manager.server_view.items() if v.last_seen > now - self.SERVER_HEARTBEAT_TIMEOUT}
         self.connection_manager.server_view = filtered_view
         if len(filtered_view) != old_len:
-            print(f"Server view size shrunk to {len(filtered_view)}")
+            Debug.log(f"Server view size shrunk to {len(filtered_view)}", "LEADER")
 
 
 
