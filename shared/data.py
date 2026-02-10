@@ -128,3 +128,8 @@ class GossipPlayerStats:
     server_uuid: str
     seq: int
     stats: PlayerStats
+
+@dataclass
+class SwitchServerData:
+    ip: str
+    tcp_port: int

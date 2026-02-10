@@ -119,6 +119,13 @@ class ServerLoop:
 
             self.connection_manager.tick_client_heartbeat(now)
 
+            if self.is_leader and not self.connection_manager.redistribution_planned:
+                if self.connection_manager.server_view:
+                    self.connection_manager.plan_redistribute_clients(now)
+                    self.connection_manager.redistribution_planned = True
+
+            self.connection_manager.tick_switch_clients(now)
+
             time.sleep(max(0.0, self.tick_rate - (time.time() - start_time)))
 
     def handle_gossip_message(self, packet: Packet):
@@ -542,6 +549,8 @@ class ServerLoop:
         if self.is_leader:
             # broadcast leader heartbeat
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL, broadcast_attempts=3)
+            self.connection_manager.redistribution_planned = False
+
         else:
             # udp heartbeat to leader
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_info.ip, self.leader_info.udp_port)
