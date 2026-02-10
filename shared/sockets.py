@@ -187,7 +187,7 @@ class UDPSocket(mp.Process):
             except socket.timeout:
                 continue
             except OSError:
-                break
+                continue
         Debug.log("Receiver stopped.")
 
     def stop(self):

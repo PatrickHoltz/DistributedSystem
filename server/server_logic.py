@@ -299,7 +299,7 @@ class ConnectionManager:
                 server_info = self._assign_client()
                 login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
             response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
-            self.udp_socket.send_to(response, address)
+            self.udp_socket.send_to(response, address, 2)
         except TypeError as e:
             print("Invalid login data received.", e)
 

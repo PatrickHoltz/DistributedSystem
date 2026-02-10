@@ -120,7 +120,7 @@ class ServerLoop:
 
             self.connection_manager.tick_client_heartbeat(now)
 
-            time.sleep(max(0, self.tick_rate - (time.time() - start_time)))
+            time.sleep(max(0.0, self.tick_rate - (time.time() - start_time)))
 
     def handle_gossip_message(self, packet: Packet):
         match packet.tag:
@@ -368,9 +368,8 @@ class ServerLoop:
                 tag=PacketTag.BULLY_OK,
                 server_uuid=UUID(self.server_uuid).int
             )
-            self.connection_manager.udp_socket.send_to(ok_packet, address)
+            self.connection_manager.udp_socket.send_to(ok_packet, address, 2)
 
-            # DO NOT start a new election here
             self._try_start_election()
 
         # I am the current leader and the incoming packet has a higher uuid => stepping down as leader
@@ -381,6 +380,8 @@ class ServerLoop:
                 self.is_leader = False
                 self.leader_info = None
                 self.election_in_progress = False
+
+            self._try_start_election()
 
     def _handle_bully_coordinator_message(self, packet: Packet):
         leader_info = ServerInfo(**packet.content)
@@ -421,7 +422,7 @@ class ServerLoop:
         if self.gt(self.server_uuid, leader_info.server_uuid):
             with self._election_lock:
                 if self.election_in_progress:
-                    Debug.log("Ignoring weaker heartbeat <{leader_uuid}> during my election", "SERVER",
+                    Debug.log(f"Ignoring weaker heartbeat <{leader_info.server_uuid}> during my election", "SERVER",
                               "BULLY")
                     return
 
@@ -456,6 +457,8 @@ class ServerLoop:
 
         if self.coordinator_timer:
             self.coordinator_timer.cancel()
+        if self.election_timer:
+            self.election_timer.cancel()
 
         # leader changed
         if old_leader_uuid is None or old_leader_uuid != leader_info.server_uuid:
@@ -503,6 +506,10 @@ class ServerLoop:
 
         self.connection_manager.udp_socket.broadcast(election_packet, 3)
 
+        if self.election_timer:
+            self.election_timer.cancel()
+        if self.coordinator_timer:
+            self.coordinator_timer.cancel()
         self.election_timer = threading.Timer(self.BULLY_ELECTION_OK_WAIT, self._become_leader)
         self.election_timer.start()
 
