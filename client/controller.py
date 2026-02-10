@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from typing import Optional
+from uuid import UUID
 
 from client.events import UIEventDispatcher, Events
 from model import ClientGameState
@@ -66,8 +67,9 @@ class ConnectionService(TCPClientConnection):
                 case PacketTag.LOGIN_CONFIRM:
                     game_state = PlayerGameStateData.from_dict(packet.content)
                     self._client_game_state.update(game_state)
-                    print(f"You are now logged in as {self._username}")
-                    self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state)
+                    server_uuid = str(UUID(int=packet.server_uuid))
+                    print(f"You are now logged in as {self._username}. Server UUID: {server_uuid}")
+                    self.dispatcher.emit(Events.LOGGED_IN, self._client_game_state, server_uuid)
                     self._restart_server_timer()
 
                 # handle the same tags as before

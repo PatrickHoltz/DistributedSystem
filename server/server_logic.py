@@ -223,7 +223,7 @@ class ConnectionManager:
 
         # send login confirm
         player_state = self.server_loop.game_state_manager.get_player_state(username)
-        login_confirm = Packet(player_state, tag=PacketTag.LOGIN_CONFIRM)
+        login_confirm = Packet(player_state, tag=PacketTag.LOGIN_CONFIRM, server_uuid=UUID(self.server_loop.server_uuid).int)
         communicator.send(login_confirm)
 
         self.active_connections[username] = communicator

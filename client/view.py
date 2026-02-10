@@ -6,6 +6,7 @@ import tkinter as tk
 import uuid
 from ctypes import windll
 from typing import cast, Optional
+from uuid import UUID
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
@@ -79,11 +80,12 @@ class PlayerApp:
         # track current frame for future hide calls
         self.current_frame = new_frame
 
-    def on_logged_in(self, game_state: ClientGameState):
+    def on_logged_in(self, game_state: ClientGameState, server_uuid: str):
         if isinstance(self.current_frame,LoginPage):
             self.show_frame(GamePage)
         game_page: GamePage = cast(GamePage, self.frames[GamePage])
         game_page.update_frame(game_state)
+        game_page.set_uuid_text(server_uuid)
 
 
 class LoginPage(ctk.CTkFrame):
@@ -194,6 +196,8 @@ class GamePage(ctk.CTkFrame):
         self.logout_button = ctk.CTkButton(self, text="Logout", bg_color="black", corner_radius=0, width=60,
                                            fg_color="red4", hover_color="red3", command=self._on_logout_pressed)
         self.logout_button.place(anchor="se", relx=1.0, rely=1.0)
+
+        self.set_uuid_text(str(uuid.uuid4()))
 
 
     def update_frame(self, game_state: ClientGameState, damage_numbers=None):
@@ -326,3 +330,8 @@ class GamePage(ctk.CTkFrame):
             self.canvas.create_text(10, 75, text="Server disconnected, reconnecting...", font=("Arial", 12), fill="white", anchor="sw", tags="timeout_text")
         else:
             self.canvas.delete("timeout_text")
+
+    def set_uuid_text(self, server_uuid: str):
+        color_hex = uuid.UUID(server_uuid).hex[0:6]
+        h = self.canvas.winfo_height()
+        self.canvas.create_rectangle(0, 0, 10, h, fill=f"#{color_hex}", width=0)
