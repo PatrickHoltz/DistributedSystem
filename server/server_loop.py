@@ -100,7 +100,7 @@ class ServerLoop:
             # multicast aggregated damage to other servers
             # note: needs to be befor _leader_apply_monster_progress
             self.mmmmmm_i += 1
-            if self.mmmmmm_i % 4 == 0:
+            if self.mmmmmm_i % 10 == 0:
                 self.multicaster.cast_msg(json.dumps({
                     "type": "dmg",
                     "uuid": self.server_uuid,
