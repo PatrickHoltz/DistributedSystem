@@ -112,16 +112,19 @@ class MulticastHeartbeatPacket(MulticastPacket):
     """Contains all the data for a heartbeat"""
 
     heartbeat_id: int
+    msg_sequence_id: int
 
     TYPE_ID = 1337
 
-    def __init__(self, own_uuid: UUID, heartbeat_id: int):
+    def __init__(self, own_uuid: UUID, heartbeat_id: int, msg_sequence_id: int):
         data = {
             "heartbeat_id": heartbeat_id,
+            "msg_sequence_id": msg_sequence_id,
         }
         MulticastPacket.__init__(self, self.TYPE_ID, own_uuid, json.dumps(data))
 
         self.heartbeat_id = heartbeat_id
+        self.msg_sequence_id = msg_sequence_id
 
     @classmethod
     def from_packet(cls, packet: MulticastPacket) -> 'MulticastHeartbeatPacket | None':
@@ -131,7 +134,8 @@ class MulticastHeartbeatPacket(MulticastPacket):
 
         data = json.loads(packet._raw_content)
         heartbeat_id = data['heartbeat_id']
-        return cls(packet.sender_uuid, heartbeat_id)
+        msg_sequence_id = data['msg_sequence_id']
+        return cls(packet.sender_uuid, heartbeat_id, msg_sequence_id)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
@@ -371,6 +375,12 @@ class MulticasterProcess(Process):
 
                             if msg.heartbeat_id > last_id_seen:
                                 self._heartbeat_stamps[msg.sender_uuid] = (msg.heartbeat_id , time.monotonic())
+                            
+                            # validate if we have seen all of senders actual msgs
+                            tracker = self._received_tracker.get(msg.sender_uuid.hex)
+                            if msg.msg_sequence_id > tracker:
+                                missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
+                                self._sender.send(missing_req, prio=True)
             
             # send heartbeat if time and filter out due servers
             if time.monotonic() > self._next_heartbeat:
