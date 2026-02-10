@@ -160,6 +160,8 @@ class MulticastReceiver(Thread):
                 data = self.socket.recv(MulticastPacket.FIX_SIZE)
             except socket.timeout:
                 continue
+            except OSError:
+                continue
             
             msg = MulticastPacket.unpack(data)
 
@@ -174,7 +176,7 @@ class MulticastReceiver(Thread):
 
         with self.lock:
             if len(self.msg_queue) > 0:
-                msg = self.msg_queue.pop()
+                msg = self.msg_queue.pop(0)
 
         return msg
 
@@ -204,10 +206,13 @@ class MulticastSender(Thread):
         while not self._stop_event.is_set():
             if len(self.msg_queue) > 0:
                 with self.lock:
-                    msg = self.msg_queue.pop()
+                    msg = self.msg_queue.pop(0)
 
                 msg_bytes = msg.pack()
-                self.socket.sendto(msg_bytes, (self.group, self.port))
+                try:
+                    self.socket.sendto(msg_bytes, (self.group, self.port))
+                except OSError:
+                    continue
 
     def send(self, msg: MulticastPacket) -> None:
         with self.lock:
@@ -217,7 +222,7 @@ class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
     DEBUG = False
-    LOGGING = False
+    LOGGING = True
     OMISSION_CHANCE = 0
 
     HEARTBEAT_INTERVAL = 3
