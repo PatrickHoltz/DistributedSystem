@@ -227,11 +227,18 @@ class ServerLoop:
     def _filter_server_view(self):
         """Filters outdated servers from the server view"""
         old_len = len(self.connection_manager.server_view)
-        now = time.monotonic()
-        filtered_view = {k: v for k, v in self.connection_manager.server_view.items() if v.last_seen > now - self.SERVER_HEARTBEAT_TIMEOUT}
+        limit = time.monotonic() - self.SERVER_HEARTBEAT_TIMEOUT
+        
+        filtered_view = {}
+        for k, v in self.connection_manager.server_view.items():
+            if v.last_seen > limit:
+                filtered_view[k] = v
+            else:
+                Debug.log(f"Server timedout, removing: {v.server_info.server_uuid}", "LEADER")
+        if len(filtered_view) < old_len:
+            Debug.log(f"Remaining {len(filtered_view)} active server", "LEADER")
+
         self.connection_manager.server_view = filtered_view
-        if len(filtered_view) != old_len:
-            Debug.log(f"Server view size shrunk to {len(filtered_view)}", "LEADER")
 
     def deliver_packet_to_clients(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""

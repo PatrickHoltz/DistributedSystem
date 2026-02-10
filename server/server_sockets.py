@@ -101,6 +101,10 @@ class ServerUDPSocket(Thread):
 
                     #Debug.log("Server heartbeat received.", "LEADER")
                     server_state = ServerState(server_info, time.monotonic())
+                    
+                    if server_info.server_uuid not in self._connection_manager.server_view:
+                        Debug.log(f"New server discovered: {server_info.server_uuid}", "LEADER")
+
                     self._connection_manager.server_view[server_info.server_uuid] = server_state
 
             case PacketTag.BULLY_OK:
