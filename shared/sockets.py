@@ -166,8 +166,7 @@ class UDPSocket(mp.Process):
                 self._socket.sendto(packet.encode(), addr)
             except queue.Empty:
                 continue
-            except OSError as e:
-                Debug.log(f"Could not send package. {str(e)}")
+            except OSError:
                 continue
         Debug.log("Sender stopped.")
 

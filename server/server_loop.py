@@ -335,6 +335,9 @@ class ServerLoop:
 
 
     def handle_bully_ok_message(self, packet: Packet) -> None:
+        if not self.election_in_progress:
+            return
+
         responder_uuid = packet.content["responder_uuid"]
 
         Debug.log(f"Received bully OK from {responder_uuid}", "SERVER", "BULLY")
@@ -396,7 +399,7 @@ class ServerLoop:
 
             self._restart_leader_heartbeat_timer()
 
-            Debug.log(f"Coordinator message received by <{leader_info}>", "SERVER", "BULLY")
+            Debug.log(f"Coordinator message received by <{leader_info.server_uuid}>", "SERVER", "BULLY")
 
             self._accept_leader(leader_info)
 
@@ -450,6 +453,9 @@ class ServerLoop:
         if self.is_leader:
             # ensure the first heartbeat goes out quickly after leadership change
             self._next_hb = time.monotonic()
+
+        if self.coordinator_timer:
+            self.coordinator_timer.cancel()
 
         # leader changed
         if old_leader_uuid is None or old_leader_uuid != leader_info.server_uuid:
