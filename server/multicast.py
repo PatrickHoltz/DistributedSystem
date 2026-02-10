@@ -16,6 +16,9 @@ from uuid import UUID
 
 from shared.utils import Debug
 
+from datetime import datetime
+import os
+
 @dataclass
 class MulticastPacket:
     """Basic data needed for every package"""
@@ -164,6 +167,10 @@ class MulticastReceiver(Thread):
                 continue
             
             msg = MulticastPacket.unpack(data)
+            
+            timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+            with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
+                f.write(f"[{timestamp}] Recv package: {msg}\n")
 
             with self.lock:
                 self.msg_queue.append(msg)
@@ -207,6 +214,10 @@ class MulticastSender(Thread):
             if len(self.msg_queue) > 0:
                 with self.lock:
                     msg = self.msg_queue.pop(0)
+                
+                timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
+                    f.write(f"[{timestamp}] Send package: {msg}\n")
 
                 msg_bytes = msg.pack()
                 try:
@@ -222,7 +233,7 @@ class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
     DEBUG = False
-    LOGGING = True
+    LOGGING = False
     OMISSION_CHANCE = 0
 
     HEARTBEAT_INTERVAL = 3
@@ -442,7 +453,7 @@ class Multicaster:
 
     _multicaster_process: MulticasterProcess
 
-    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '239.255.0.1') -> None:
+    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '224.0.0.1') -> None:
         self._multicaster_process = MulticasterProcess(group, uuid)
         self.on_msg_handler = on_msg_handler
 
