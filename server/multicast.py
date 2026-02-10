@@ -14,7 +14,11 @@ from threading import Thread, Lock
 from typing import Callable
 from uuid import UUID
 
+from shared.sockets import SocketUtils
 from shared.utils import Debug
+
+from datetime import datetime
+import os
 
 @dataclass
 class MulticastPacket:
@@ -23,7 +27,7 @@ class MulticastPacket:
     sender_uuid: UUID
     _raw_content: str
 
-    FIX_SIZE: int = 16384
+    FIX_SIZE: int = 2048
 
     @staticmethod
     def get_format_str() -> str:
@@ -131,6 +135,7 @@ class MulticastHeartbeatPacket(MulticastPacket):
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
+    LOGGING = False
 
     msg_queue: list[MulticastPacket]
     lock: Lock
@@ -146,24 +151,34 @@ class MulticastReceiver(Thread):
         self._stop_event = stop_event
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind(('', self.port))
 
     def run(self) -> None:
-        config = struct.pack("4sl", socket.inet_aton(self.group), socket.INADDR_ANY)
+        config = struct.pack("4s4s", socket.inet_aton(self.group), socket.inet_aton(SocketUtils.local_ip))
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
         self.socket.settimeout(1)
 
         while not self._stop_event.is_set():
             data: bytes
             try:
-                data = self.socket.recv(MulticastPacket.FIX_SIZE)
+                data = self.socket.recv(MulticastPacket.FIX_SIZE * 2)
             except socket.timeout:
                 continue
-            except OSError:
+            except OSError as error:
+                if self.LOGGING:
+                    timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                    with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
+                        f.write(f"[{timestamp}] [ERROR] {error}\n")
                 continue
             
             msg = MulticastPacket.unpack(data)
+            
+            if self.LOGGING:
+                timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
+                    f.write(f"[{timestamp}] Recv package: {msg}\n")
 
             with self.lock:
                 self.msg_queue.append(msg)
@@ -182,6 +197,7 @@ class MulticastReceiver(Thread):
 
 class MulticastSender(Thread):
     """Creates a new thread for sending multicast packages"""
+    LOGGING = False
 
     # how many network hops the msg will take (see https://www.tldp.org/HOWTO/Multicast-HOWTO-6.html)
     MULTICAST_TTL = 1
@@ -207,11 +223,20 @@ class MulticastSender(Thread):
             if len(self.msg_queue) > 0:
                 with self.lock:
                     msg = self.msg_queue.pop(0)
+                
+                if self.LOGGING:
+                    timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                    with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
+                        f.write(f"[{timestamp}] Send package: {msg}\n")
 
                 msg_bytes = msg.pack()
                 try:
                     self.socket.sendto(msg_bytes, (self.group, self.port))
-                except OSError:
+                except OSError as error:
+                    if self.LOGGING:
+                        timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                        with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
+                            f.write(f"[{timestamp}] [ERROR] {error}\n")
                     continue
 
     def send(self, msg: MulticastPacket) -> None:
@@ -222,7 +247,7 @@ class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
     PORT = 5007
     DEBUG = False
-    LOGGING = True
+    LOGGING = False
     OMISSION_CHANCE = 0
 
     HEARTBEAT_INTERVAL = 3
@@ -442,7 +467,7 @@ class Multicaster:
 
     _multicaster_process: MulticasterProcess
 
-    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '239.255.0.1') -> None:
+    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '224.0.0.1') -> None:
         self._multicaster_process = MulticasterProcess(group, uuid)
         self.on_msg_handler = on_msg_handler
 
