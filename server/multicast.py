@@ -399,8 +399,10 @@ class MulticasterProcess(Process):
                         timeouted.append(uuid)
                 
                 for uuid in timeouted:
-                    del self._received_tracker[uuid.hex]
                     del self._heartbeat_stamps[uuid]
+                    
+                    if uuid.hex in self._received_tracker:
+                        del self._received_tracker[uuid.hex]
 
     # basic multicast
     def _on_receive(self, msg: MulticastMessagePacket) -> None:
