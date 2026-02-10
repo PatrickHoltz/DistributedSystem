@@ -78,6 +78,7 @@ class ServerLoop:
         
         self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
         self.damage_tracker = {}
+        self.mmmmmm_i = 1
         
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
@@ -98,12 +99,14 @@ class ServerLoop:
             
             # multicast aggregated damage to other servers
             # note: needs to be befor _leader_apply_monster_progress
-            self.multicaster.cast_msg(json.dumps({
-                "type": "dmg",
-                "uuid": self.server_uuid,
-                "stage": self.game_state_manager.get_monster().stage,
-                "damage": self.game_state_manager.overall_dmg,
-            }))
+            self.mmmmmm_i += 1
+            if self.mmmmmm_i % 4 == 0:
+                self.multicaster.cast_msg(json.dumps({
+                    "type": "dmg",
+                    "uuid": self.server_uuid,
+                    "stage": self.game_state_manager.get_monster().stage,
+                    "damage": self.game_state_manager.overall_dmg,
+                }))
             self.multicaster.empty_msg_queue()
 
             # Leader computes monster HP/stage based on merged damage counters
