@@ -156,6 +156,7 @@ class MulticastReceiver(Thread):
     def run(self) -> None:
         config = struct.pack("4s4s", socket.inet_aton(self.group), socket.inet_aton(SocketUtils.local_ip))
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
         self.socket.settimeout(1)
 
         while not self._stop_event.is_set():
