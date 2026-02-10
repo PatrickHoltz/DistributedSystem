@@ -26,12 +26,11 @@ class ServerLoop:
 
     SERVER_TO_LEADER_HEARTBEAT_INTERVAL = 1.0
 
-    BULLY_HEARTBEAT_INTERVAL = 1.0
-    BULLY_HEARTBEAT_TIMEOUT = 4.0
+    BULLY_HEARTBEAT_INTERVAL = 6.0
+    BULLY_HEARTBEAT_TIMEOUT = 6.0
     BULLY_ELECTION_OK_WAIT = 4.0
     BULLY_COORDINATOR_WAIT = 8.0
-    TAKEOVER_COOLDOWN = 0
-    _next_takeover_allowed = 0.0
+    TAKEOVER_COOLDOWN = 2.0
 
     SERVER_HEARTBEAT_TIMEOUT = 4.0
 
@@ -451,6 +450,9 @@ class ServerLoop:
             self.is_leader = (leader_info.server_uuid == self.server_uuid)
             self.election_in_progress = False
             self._last_leader_seen = time.monotonic()
+            if self.election_timer:
+                self.election_timer.cancel()
+                self.election_timer = None
         if self.is_leader:
             # ensure the first heartbeat goes out quickly after leadership change
             self._next_hb = time.monotonic()
@@ -469,6 +471,8 @@ class ServerLoop:
     def _become_leader(self):
         """Callback when no OK-Message has been received after an election broadcast."""
         with self._election_lock:
+            if not self.election_in_progress:
+                return
             self.leader_info = self.connection_manager.server_info
             self.is_leader = True
             self.election_in_progress = False
