@@ -26,11 +26,11 @@ class ServerLoop:
 
     SERVER_TO_LEADER_HEARTBEAT_INTERVAL = 1.0
 
-    BULLY_HEARTBEAT_INTERVAL = 6.0
-    BULLY_HEARTBEAT_TIMEOUT = 6.0
+    BULLY_HEARTBEAT_INTERVAL = 0.8
+    BULLY_HEARTBEAT_TIMEOUT = 10
     BULLY_ELECTION_OK_WAIT = 4.0
     BULLY_COORDINATOR_WAIT = 8.0
-    TAKEOVER_COOLDOWN = 2.0
+    TAKEOVER_COOLDOWN = 8.0
 
     SERVER_HEARTBEAT_TIMEOUT = 4.0
 
@@ -310,6 +310,7 @@ class ServerLoop:
                 return
             self._last_election_trigger = now
 
+        time.sleep(random.uniform(0.0, 0.6))
         self._start_election()
 
     @staticmethod
@@ -533,7 +534,7 @@ class ServerLoop:
 
         if self.is_leader:
             # broadcast leader heartbeat
-            self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL)
+            self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL, broadcast_attempts=3)
         else:
             # udp heartbeat to leader
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_info.ip, self.leader_info.udp_port)
