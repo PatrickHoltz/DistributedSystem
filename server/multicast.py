@@ -239,9 +239,12 @@ class MulticastSender(Thread):
                             f.write(f"[{timestamp}] [ERROR] {error}\n")
                     continue
 
-    def send(self, msg: MulticastPacket) -> None:
+    def send(self, msg: MulticastPacket, prio=False) -> None:
         with self.lock:
-            self.msg_queue.append(msg)
+            if prio:
+                self.msg_queue.insert(0, msg)
+            else:
+                self.msg_queue.append(msg)
 
 class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
@@ -356,7 +359,7 @@ class MulticasterProcess(Process):
                             key = (msg.msg_sender_uuid, msg.msg_sequence_id)
                             if key in self._received_msgs:
                                 stored_msgs = self._received_msgs[key]
-                                self._sender.send(stored_msgs)
+                                self._sender.send(stored_msgs, prio=True)
 
                     case MulticastHeartbeatPacket.TYPE_ID:
                         msg = MulticastHeartbeatPacket.from_packet(msg)
@@ -398,7 +401,7 @@ class MulticasterProcess(Process):
 
         elif msg.sequence_id > tracker:
             missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
-            self._sender.send(missing_req)
+            self._sender.send(missing_req, prio=True)
 
             self._hold_back_queue.append(msg)
 
