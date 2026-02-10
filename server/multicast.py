@@ -135,7 +135,7 @@ class MulticastHeartbeatPacket(MulticastPacket):
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
-    LOGGING = False
+    LOGGING = True
 
     msg_queue: list[MulticastPacket]
     lock: Lock
@@ -175,7 +175,7 @@ class MulticastReceiver(Thread):
             
             msg = MulticastPacket.unpack(data)
             
-            if self.LOGGING:
+            if self.LOGGING and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
                 timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
                 with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
                     f.write(f"[{timestamp}] Recv package: {msg}\n")
@@ -197,7 +197,7 @@ class MulticastReceiver(Thread):
 
 class MulticastSender(Thread):
     """Creates a new thread for sending multicast packages"""
-    LOGGING = False
+    LOGGING = True
 
     # how many network hops the msg will take (see https://www.tldp.org/HOWTO/Multicast-HOWTO-6.html)
     MULTICAST_TTL = 1
@@ -216,6 +216,7 @@ class MulticastSender(Thread):
         self._stop_event = stop_event
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.MULTICAST_TTL)
 
     def run(self) -> None:
@@ -224,7 +225,7 @@ class MulticastSender(Thread):
                 with self.lock:
                     msg = self.msg_queue.pop(0)
                 
-                if self.LOGGING:
+                if self.LOGGING and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
                     timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
                     with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
                         f.write(f"[{timestamp}] Send package: {msg}\n")
