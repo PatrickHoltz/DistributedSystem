@@ -437,7 +437,7 @@ class Multicaster:
 
     _multicaster_process: MulticasterProcess
 
-    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '224.0.0.42') -> None:
+    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '239.255.0.1') -> None:
         self._multicaster_process = MulticasterProcess(group, uuid)
         self.on_msg_handler = on_msg_handler
 
