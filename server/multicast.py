@@ -14,6 +14,7 @@ from threading import Thread, Lock
 from typing import Callable
 from uuid import UUID
 
+from shared.sockets import SocketUtils
 from shared.utils import Debug
 
 from datetime import datetime
@@ -153,7 +154,7 @@ class MulticastReceiver(Thread):
         self.socket.bind(('', self.port))
 
     def run(self) -> None:
-        config = struct.pack("4sl", socket.inet_aton(self.group), socket.INADDR_ANY)
+        config = struct.pack("4s4s", socket.inet_aton(self.group), SocketUtils.local_ip)
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, config)
         self.socket.settimeout(1)
 
@@ -163,7 +164,10 @@ class MulticastReceiver(Thread):
                 data = self.socket.recv(MulticastPacket.FIX_SIZE)
             except socket.timeout:
                 continue
-            except OSError:
+            except OSError as error:
+                timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
+                    f.write(f"[{timestamp}] [ERROR] {error}\n")
                 continue
             
             msg = MulticastPacket.unpack(data)
@@ -222,7 +226,10 @@ class MulticastSender(Thread):
                 msg_bytes = msg.pack()
                 try:
                     self.socket.sendto(msg_bytes, (self.group, self.port))
-                except OSError:
+                except OSError as error:
+                    timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
+                    with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
+                        f.write(f"[{timestamp}] [ERROR] {error}\n")
                     continue
 
     def send(self, msg: MulticastPacket) -> None:
