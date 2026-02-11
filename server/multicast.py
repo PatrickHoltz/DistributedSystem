@@ -179,7 +179,7 @@ class MulticastReceiver(Thread):
             
             msg = MulticastPacket.unpack(data)
             
-            if self.LOGGING and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
+            if self.LOGGING:# and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
                 timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
                 with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
                     f.write(f"[{timestamp}] Recv package: {msg}\n")
@@ -229,7 +229,7 @@ class MulticastSender(Thread):
                 with self.lock:
                     msg = self.msg_queue.pop(0)
                 
-                if self.LOGGING and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
+                if self.LOGGING:# and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
                     timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
                     with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
                         f.write(f"[{timestamp}] Send package: {msg}\n")
@@ -378,7 +378,7 @@ class MulticasterProcess(Process):
                             
                             # validate if we have seen all of senders actual msgs
                             tracker = self._received_tracker.get(msg.sender_uuid.hex, 0)
-                            if msg.msg_sequence_id > tracker - 1:
+                            if msg.msg_sequence_id > tracker:
                                 missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
                                 self._sender.send(missing_req, prio=True)
             
