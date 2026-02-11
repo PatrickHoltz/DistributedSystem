@@ -279,6 +279,8 @@ class MulticasterProcess(Process):
     _heartbeat_stamps: dict[str, tuple[int, float]]
     _next_heartbeat: float
     _heartbeat_id: int
+    
+    _global_tracker: dict[str, dict[str, int]]
 
     def __init__(self, group: str, uuid: UUID) -> None:
         super().__init__(daemon=False, name=f"Multicaster ({group})")
@@ -297,6 +299,8 @@ class MulticasterProcess(Process):
         self._heartbeat_stamps = {}
         self._next_heartbeat = time.monotonic() - self.HEARTBEAT_INTERVAL
         self._heartbeat_id = 1
+        
+        self._global_tracker = {}
         
         self._stop_event = Event()
 
@@ -382,14 +386,16 @@ class MulticasterProcess(Process):
                                 missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
                                 self._sender.send(missing_req, prio=True)
             
-            # send heartbeat if time and filter out due servers
+            # send heartbeat if it's due and filter out the timeouted servers
             if time.monotonic() > self._next_heartbeat:
                 self._next_heartbeat = time.monotonic() + self.HEARTBEAT_INTERVAL
                 
+                # send out heartbeat
                 hb = MulticastHeartbeatPacket(self.uuid, self._heartbeat_id, self._sequence_number)
                 self._heartbeat_id += 1
                 self._sender.send(hb)
                 
+                # find timeouted servers
                 now = time.monotonic()
                 limit = 3 * self.HEARTBEAT_INTERVAL
                 timeouted = []
@@ -398,11 +404,30 @@ class MulticasterProcess(Process):
                     if now - stamp > limit:
                         timeouted.append(uuid)
                 
+                # remove timeouted servers
                 for uuid in timeouted:
                     del self._heartbeat_stamps[uuid]
                     
-                    if uuid.hex in self._received_tracker:
-                        del self._received_tracker[uuid.hex]
+                self._filter_received_tracker()
+                self._filter_global_tracker()
+                
+                # remove outlived msgs
+    
+    def _filter_received_tracker(self) -> None:
+        self._received_tracker = {k:v for k,v in self._received_tracker.items() if UUID(k) in self._heartbeat_stamps}
+
+    def _filter_global_tracker(self) -> None:
+        self._global_tracker = {k:v for k,v in self._global_tracker.items() if UUID(k) in self._heartbeat_stamps}
+
+    def _filter_received_msgs(self) -> None:
+        min_sequence_ids = {}
+        for tracker in self._global_tracker.values():
+            pass
+        
+        filtered_msgs = {}
+        for (uuid, sq_id), msg in self._received_msgs.items():
+            
+            
 
     # basic multicast
     def _on_receive(self, msg: MulticastMessagePacket) -> None:
@@ -438,7 +463,7 @@ class MulticasterProcess(Process):
 
     def _reliable_multicast(self, content: str) -> None:
         data = {
-            'received_tracker': self._received_tracker,
+            'recv_tracker': self._received_tracker,
             'content': content
         }
         json_str = json.dumps(data)
@@ -455,6 +480,8 @@ class MulticasterProcess(Process):
         data = json.loads(msg.content)
         if msg.sender_uuid == self.uuid:
             return # ignore messages from myself
+
+        self._global_tracker[msg.sender_uuid.hex] = data['recv_tracker']
 
         msg_str = data['content']
         self.out_queue.put_nowait(msg_str)
