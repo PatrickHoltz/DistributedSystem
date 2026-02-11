@@ -35,7 +35,6 @@ class PacketTag(StrEnum):
 
     #Gossip
     GOSSIP_PLAYER_STATS = "gossip_player_stats"
-    GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
 
     SWITCH_SERVER = "switch_server"
 

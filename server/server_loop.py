@@ -564,6 +564,8 @@ class ServerLoop:
             self.connection_manager.redistribution_planned = False
 
         else:
+            if not self.leader_info:
+                return
             # udp heartbeat to leader
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_info.ip, self.leader_info.udp_port)
         self._heartbeat.start()

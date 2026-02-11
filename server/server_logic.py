@@ -29,7 +29,7 @@ class GameStateManager:
 
     def touch_player(self, username: str):
         """Update last_seen_ts for TTL-online"""
-        now = time.time()
+        now = time.monotonic()
         player = self._game_state.players.get(username)
         if player is None:
             return
@@ -38,7 +38,7 @@ class GameStateManager:
 
     def _refresh_online_flags(self):
         """Derive online from last_seen_ts using TTL."""
-        now = time.time()
+        now = time.monotonic()
         for player in self._game_state.players.values():
             last = float(getattr(player, "last_seen_ts", 0.0))
             player.online = (now - last) < self.ONLINE_TTL_SECONDS
@@ -60,6 +60,7 @@ class GameStateManager:
 
     def merge_player_stats(self, incoming_players: dict[str, dict]):
         """Merge gossip-safe player metaData into local state."""
+
         for username, metaData in incoming_players.items():
             incoming_username = metaData.get("username", username)
             incoming_level = int(metaData.get("level", 1))
@@ -126,7 +127,7 @@ class GameStateManager:
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online."""
-        now = time.time()
+        now = time.monotonic()
         if username not in self._game_state.players:
             self._game_state.players[username] = PlayerData(
                 username=username,
@@ -327,7 +328,7 @@ class ConnectionManager:
     def handle_broadcast(self, packet: Packet, address: Address) -> None:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
         match packet.tag:
-            case PacketTag.GOSSIP_PLAYER_STATS | PacketTag.GOSSIP_MONSTER_SYNC:
+            case PacketTag.GOSSIP_PLAYER_STATS:
                 self.server_loop.handle_gossip_message(packet)
             case PacketTag.LOGIN:
                 self._handle_login(packet, address)
