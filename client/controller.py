@@ -27,7 +27,8 @@ class LoginService:
         login_data = LoginData(username)
         packet = Packet(login_data, tag=PacketTag.LOGIN)
         login_broadcast = BroadcastSocket(packet, self._handle_login_response,
-                                          lambda: self._handle_login_failure("Login failed. Server did not respond"))
+                                          lambda: self._handle_login_failure("Login failed. Server did not respond"),
+                                          send_attempts=10)
         login_broadcast.start()
 
     def _handle_login_response(self, packet: Packet, _address: tuple[str, int]):
