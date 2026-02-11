@@ -16,7 +16,7 @@ from client.events import UIEventDispatcher, Events
 from model import ClientGameState
 
 # with Windows set the script to be dpi aware before calling Tk()
-windll.shcore.SetProcessDpiAwareness(1)
+#windll.shcore.SetProcessDpiAwareness(1)
 
 class PlayerApp:
     """
