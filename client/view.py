@@ -18,7 +18,6 @@ from model import ClientGameState
 # with Windows set the script to be dpi aware before calling Tk()
 windll.shcore.SetProcessDpiAwareness(1)
 
-
 class PlayerApp:
     """
     UI class for the player. Allows a player to interact with the game.
@@ -46,6 +45,7 @@ class PlayerApp:
         self.root.geometry("600x400")
         self.root.geometry(f"{600}x{400}")
         self.root.resizable(False, False)
+        self.root.attributes("-topmost", True)
 
         favicon = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "images", "Alien.ico"))
         photo = ImageTk.PhotoImage(favicon)
