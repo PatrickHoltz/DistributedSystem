@@ -139,7 +139,7 @@ class MulticastHeartbeatPacket(MulticastPacket):
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
-    LOGGING = True
+    LOGGING = False
 
     msg_queue: list[MulticastPacket]
     lock: Lock
@@ -201,7 +201,7 @@ class MulticastReceiver(Thread):
 
 class MulticastSender(Thread):
     """Creates a new thread for sending multicast packages"""
-    LOGGING = True
+    LOGGING = False
 
     # how many network hops the msg will take (see https://www.tldp.org/HOWTO/Multicast-HOWTO-6.html)
     MULTICAST_TTL = 1
