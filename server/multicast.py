@@ -112,16 +112,19 @@ class MulticastHeartbeatPacket(MulticastPacket):
     """Contains all the data for a heartbeat"""
 
     heartbeat_id: int
+    msg_sequence_id: int
 
     TYPE_ID = 1337
 
-    def __init__(self, own_uuid: UUID, heartbeat_id: int):
+    def __init__(self, own_uuid: UUID, heartbeat_id: int, msg_sequence_id: int):
         data = {
             "heartbeat_id": heartbeat_id,
+            "msg_sequence_id": msg_sequence_id,
         }
         MulticastPacket.__init__(self, self.TYPE_ID, own_uuid, json.dumps(data))
 
         self.heartbeat_id = heartbeat_id
+        self.msg_sequence_id = msg_sequence_id
 
     @classmethod
     def from_packet(cls, packet: MulticastPacket) -> 'MulticastHeartbeatPacket | None':
@@ -131,7 +134,8 @@ class MulticastHeartbeatPacket(MulticastPacket):
 
         data = json.loads(packet._raw_content)
         heartbeat_id = data['heartbeat_id']
-        return cls(packet.sender_uuid, heartbeat_id)
+        msg_sequence_id = data['msg_sequence_id']
+        return cls(packet.sender_uuid, heartbeat_id, msg_sequence_id)
 
 class MulticastReceiver(Thread):
     """Creates a new thread for handling incoming multicast packages"""
@@ -175,7 +179,7 @@ class MulticastReceiver(Thread):
             
             msg = MulticastPacket.unpack(data)
             
-            if self.LOGGING:
+            if self.LOGGING and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
                 timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
                 with open(f"multicast_log-recv-{os.getpid()}.txt", "a") as f:
                     f.write(f"[{timestamp}] Recv package: {msg}\n")
@@ -216,6 +220,7 @@ class MulticastSender(Thread):
         self._stop_event = stop_event
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        #self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
         self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self.MULTICAST_TTL)
 
     def run(self) -> None:
@@ -224,7 +229,7 @@ class MulticastSender(Thread):
                 with self.lock:
                     msg = self.msg_queue.pop(0)
                 
-                if self.LOGGING:
+                if self.LOGGING and msg.type_id != MulticastHeartbeatPacket.TYPE_ID:
                     timestamp = datetime.now().strftime('%H:%M:%S:%f')[:-3]
                     with open(f"multicast_log-send-{os.getpid()}.txt", "a") as f:
                         f.write(f"[{timestamp}] Send package: {msg}\n")
@@ -239,9 +244,12 @@ class MulticastSender(Thread):
                             f.write(f"[{timestamp}] [ERROR] {error}\n")
                     continue
 
-    def send(self, msg: MulticastPacket) -> None:
+    def send(self, msg: MulticastPacket, prio=False) -> None:
         with self.lock:
-            self.msg_queue.append(msg)
+            if prio:
+                self.msg_queue.insert(0, msg)
+            else:
+                self.msg_queue.append(msg)
 
 class MulticasterProcess(Process):
     """Process that handles reliably ordered (FIFO) multicasts"""
@@ -356,7 +364,7 @@ class MulticasterProcess(Process):
                             key = (msg.msg_sender_uuid, msg.msg_sequence_id)
                             if key in self._received_msgs:
                                 stored_msgs = self._received_msgs[key]
-                                self._sender.send(stored_msgs)
+                                self._sender.send(stored_msgs, prio=True)
 
                     case MulticastHeartbeatPacket.TYPE_ID:
                         msg = MulticastHeartbeatPacket.from_packet(msg)
@@ -367,12 +375,18 @@ class MulticasterProcess(Process):
 
                             if msg.heartbeat_id > last_id_seen:
                                 self._heartbeat_stamps[msg.sender_uuid] = (msg.heartbeat_id , time.monotonic())
+                            
+                            # validate if we have seen all of senders actual msgs
+                            tracker = self._received_tracker.get(msg.sender_uuid.hex, 0)
+                            if msg.msg_sequence_id > tracker:
+                                missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
+                                self._sender.send(missing_req, prio=True)
             
             # send heartbeat if time and filter out due servers
             if time.monotonic() > self._next_heartbeat:
                 self._next_heartbeat = time.monotonic() + self.HEARTBEAT_INTERVAL
                 
-                hb = MulticastHeartbeatPacket(self.uuid, self._heartbeat_id)
+                hb = MulticastHeartbeatPacket(self.uuid, self._heartbeat_id, self._sequence_number)
                 self._heartbeat_id += 1
                 self._sender.send(hb)
                 
@@ -385,8 +399,10 @@ class MulticasterProcess(Process):
                         timeouted.append(uuid)
                 
                 for uuid in timeouted:
-                    del self._received_tracker[uuid.hex]
                     del self._heartbeat_stamps[uuid]
+                    
+                    if uuid.hex in self._received_tracker:
+                        del self._received_tracker[uuid.hex]
 
     # basic multicast
     def _on_receive(self, msg: MulticastMessagePacket) -> None:
@@ -398,7 +414,7 @@ class MulticasterProcess(Process):
 
         elif msg.sequence_id > tracker:
             missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
-            self._sender.send(missing_req)
+            self._sender.send(missing_req, prio=True)
 
             self._hold_back_queue.append(msg)
 
@@ -467,7 +483,7 @@ class Multicaster:
 
     _multicaster_process: MulticasterProcess
 
-    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '224.0.0.1') -> None:
+    def __init__(self, uuid: UUID, on_msg_handler: Callable[[str], None], group: str = '239.255.0.1') -> None:
         self._multicaster_process = MulticasterProcess(group, uuid)
         self.on_msg_handler = on_msg_handler
 
