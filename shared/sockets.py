@@ -226,6 +226,7 @@ class BroadcastSocket(Thread):
 
             for i in range(self.send_attempts):
                 udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
+                time.sleep(0.05) # slightly spread out the attempts
 
             try:
                 data, addr = udp_socket.recvfrom(4096)
