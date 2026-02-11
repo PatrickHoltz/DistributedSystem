@@ -301,9 +301,9 @@ class GamePage(ctk.CTkFrame):
         self.canvas.itemconfig(self.character, image=self.character_frames[2 if self.monster_defeated else 0])
 
     def _display_defeated_screen(self):
-        self.canvas.create_text(304, 204, text="Monster Defeated!", font=("Arial", 50, "bold"), fill="black",
+        self.canvas.create_text(304, 204, text="Monster Defeated!", font=("Arial", 40, "bold"), fill="black",
                                 tags="defeat_text")
-        self.canvas.create_text(300, 200, text="Monster Defeated!", font=("Arial", 50, "bold"), fill="white",
+        self.canvas.create_text(300, 200, text="Monster Defeated!", font=("Arial", 40, "bold"), fill="white",
                                 tags="defeat_text")
         self.canvas.create_text(300, 260, text="Get ready for the next monster...", font=("Arial", 20, "bold"),
                                 fill="white", tags="defeat_text")
@@ -327,7 +327,7 @@ class GamePage(ctk.CTkFrame):
 
     def _toggle_timeout_text(self, show: bool = True):
         if show:
-            self.canvas.create_text(10, 75, text="Server disconnected, reconnecting...", font=("Arial", 12), fill="white", anchor="sw", tags="timeout_text")
+            self.canvas.create_text(20, 75, text="Server disconnected, reconnecting...", font=("Arial", 12), fill="white", anchor="sw", tags="timeout_text")
         else:
             self.canvas.delete("timeout_text")
 
