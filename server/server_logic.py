@@ -173,7 +173,7 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    SWITCH_DROP_DELAY = 0.2
+    SWITCH_DROP_DELAY = 0.1
 
     def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
