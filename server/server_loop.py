@@ -78,6 +78,8 @@ class ServerLoop:
         
         self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
         self.damage_tracker = {}
+
+        self._last_server_view_empty = True
         
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
@@ -119,8 +121,13 @@ class ServerLoop:
 
             self.connection_manager.tick_client_heartbeat(now)
 
-            if self.is_leader and not self.connection_manager.redistribution_planned:
-                if self.connection_manager.server_view:
+            current_empty = (len(self.connection_manager.server_view) == 0)
+
+            if self.is_leader:
+                if self._last_server_view_empty and not current_empty:
+                    self.connection_manager.redistribution_planned = False
+
+                if (not self.connection_manager.redistribution_planned) and self.connection_manager.server_view:
                     self.connection_manager.plan_redistribute_clients(now)
                     self.connection_manager.redistribution_planned = True
 

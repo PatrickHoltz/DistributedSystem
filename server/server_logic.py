@@ -173,7 +173,6 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
-    SWITCH_DROP_DELAY = 0.1
 
     def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
@@ -243,7 +242,7 @@ class ConnectionManager:
             self.server_loop.out_queue.put((username, pkt))
 
             #drop after 0.2 seconds
-            self._drop_after[username] = now + self.SWITCH_DROP_DELAY
+            self._drop_after[username] = now
 
     def tick_switch_clients(self, now: float):
         if not self._drop_after:
