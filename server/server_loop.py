@@ -78,6 +78,9 @@ class ServerLoop:
         
         self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
         self.damage_tracker = {}
+
+        self._last_server_view_empty = True
+        self.last_overall_dmg = -1
         
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
                   "SERVER")
@@ -98,12 +101,16 @@ class ServerLoop:
             
             # multicast aggregated damage to other servers
             # note: needs to be befor _leader_apply_monster_progress
-            self.multicaster.cast_msg(json.dumps({
-                "type": "dmg",
-                "uuid": self.server_uuid,
-                "stage": self.game_state_manager.get_monster().stage,
-                "damage": self.game_state_manager.overall_dmg,
-            }))
+            current_overall_dmg = self.game_state_manager.overall_dmg
+            if self.last_overall_dmg != current_overall_dmg:
+                self.multicaster.cast_msg(json.dumps({
+                    "type": "dmg",
+                    "uuid": self.server_uuid,
+                    "stage": self.game_state_manager.get_monster().stage,
+                    "damage": current_overall_dmg,
+                }))
+                self.last_overall_dmg = current_overall_dmg
+
             self.multicaster.empty_msg_queue()
 
             # Leader computes monster HP/stage based on merged damage counters
@@ -118,6 +125,18 @@ class ServerLoop:
             self._send_outgoing_messages()
 
             self.connection_manager.tick_client_heartbeat(now)
+
+            current_empty = (len(self.connection_manager.server_view) == 0)
+
+            if self.is_leader:
+                if self._last_server_view_empty and not current_empty:
+                    self.connection_manager.redistribution_planned = False
+
+                if (not self.connection_manager.redistribution_planned) and self.connection_manager.server_view:
+                    self.connection_manager.plan_redistribute_clients(now)
+                    self.connection_manager.redistribution_planned = True
+
+            self.connection_manager.tick_switch_clients(now)
 
             time.sleep(max(0.0, self.tick_rate - (time.time() - start_time)))
 
@@ -227,11 +246,18 @@ class ServerLoop:
     def _filter_server_view(self):
         """Filters outdated servers from the server view"""
         old_len = len(self.connection_manager.server_view)
-        now = time.monotonic()
-        filtered_view = {k: v for k, v in self.connection_manager.server_view.items() if v.last_seen > now - self.SERVER_HEARTBEAT_TIMEOUT}
+        limit = time.monotonic() - self.SERVER_HEARTBEAT_TIMEOUT
+        
+        filtered_view = {}
+        for k, v in self.connection_manager.server_view.items():
+            if v.last_seen > limit:
+                filtered_view[k] = v
+            else:
+                Debug.log(f"Server timedout, removing: {v.server_info.server_uuid}", "LEADER")
+        if len(filtered_view) < old_len:
+            Debug.log(f"Remaining {len(filtered_view)} active server", "LEADER")
+
         self.connection_manager.server_view = filtered_view
-        if len(filtered_view) != old_len:
-            Debug.log(f"Server view size shrunk to {len(filtered_view)}", "LEADER")
 
     def deliver_packet_to_clients(self, packet: Packet):
         """Writes a given packet into the outgoing queue for all connected clients."""
@@ -535,7 +561,11 @@ class ServerLoop:
         if self.is_leader:
             # broadcast leader heartbeat
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL, broadcast_attempts=3)
+            self.connection_manager.redistribution_planned = False
+
         else:
+            if not self.leader_info:
+                return
             # udp heartbeat to leader
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_info.ip, self.leader_info.udp_port)
         self._heartbeat.start()

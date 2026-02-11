@@ -39,10 +39,6 @@ class SocketUtils:
         conn.settimeout(old_timeout)
         return data
 
-    #Gossip
-    GOSSIP_PLAYER_STATS = "gossip_player_stats"
-    GOSSIP_MONSTER_SYNC = "gossip_monster_sync"
-
     @classmethod
     def recv_packet(cls, sock: socket.socket) -> Packet:
         """Blocks until a full packet is received from the socket.
@@ -226,6 +222,7 @@ class BroadcastSocket(Thread):
 
             for i in range(self.send_attempts):
                 udp_socket.sendto(self.send_packet.encode(), (self.broadcast_address, self.broadcast_port))
+                time.sleep(0.05) # slightly spread out the attempts
 
             try:
                 data, addr = udp_socket.recvfrom(4096)

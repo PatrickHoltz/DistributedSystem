@@ -29,7 +29,7 @@ class GameStateManager:
 
     def touch_player(self, username: str):
         """Update last_seen_ts for TTL-online"""
-        now = time.time()
+        now = time.monotonic()
         player = self._game_state.players.get(username)
         if player is None:
             return
@@ -38,7 +38,7 @@ class GameStateManager:
 
     def _refresh_online_flags(self):
         """Derive online from last_seen_ts using TTL."""
-        now = time.time()
+        now = time.monotonic()
         for player in self._game_state.players.values():
             last = float(getattr(player, "last_seen_ts", 0.0))
             player.online = (now - last) < self.ONLINE_TTL_SECONDS
@@ -60,6 +60,7 @@ class GameStateManager:
 
     def merge_player_stats(self, incoming_players: dict[str, dict]):
         """Merge gossip-safe player metaData into local state."""
+
         for username, metaData in incoming_players.items():
             incoming_username = metaData.get("username", username)
             incoming_level = int(metaData.get("level", 1))
@@ -126,7 +127,7 @@ class GameStateManager:
 
     def login_player(self, username: str):
         """Creates a new player entry if it does not exist and marks the player as online."""
-        now = time.time()
+        now = time.monotonic()
         if username not in self._game_state.players:
             self._game_state.players[username] = PlayerData(
                 username=username,
@@ -173,6 +174,7 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
+
     def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
@@ -181,6 +183,9 @@ class ConnectionManager:
         self.server_view: dict[str, ServerState] = {}
 
         self.server_loop: ServerLoop = server_loop
+
+        self._drop_after: dict[str, float] = {}
+        self.redistribution_planned = False
 
         # handles incoming broadcasts
         self.broadcast_listener = BroadcastListener(
@@ -206,11 +211,59 @@ class ConnectionManager:
         self.client_listener.start()
         self.udp_socket.start()
 
+    def _pick_other_server(self):
+        if not self.server_view:
+            return None
+        return min(self.server_view.values(), key=lambda st: st.server_info.occupancy).server_info
+
+    def plan_redistribute_clients(self, now: float):
+        """Plan to distribute clients"""
+        if not self.server_loop.is_leader:
+            return
+
+        if not self.server_view:
+            return
+
+        usernames = list(self.active_connections.keys())
+        if not usernames:
+            return
+
+        for username in usernames:
+            if username in self._drop_after:
+                continue
+
+            Debug.log(f"Sending all my clients away.")
+
+            target = self._pick_other_server()
+            if not target:
+                #if there are no other server
+                return
+
+            pkt = Packet(SwitchServerData(target.ip, target.tcp_port), tag=PacketTag.SWITCH_SERVER)
+            self.server_loop.out_queue.put((username, pkt))
+
+            #drop after 0.2 seconds
+            self._drop_after[username] = now
+
+    def tick_switch_clients(self, now: float):
+        if not self._drop_after:
+            return
+
+        due = [u for u, deadline in self._drop_after.items() if now >= deadline]
+        for username in due:
+            self._drop_after.pop(username, None)
+
+            # if already gone
+            if username in self.active_connections:
+                self.remove_connection(username)
+
+
     def _assign_client(self) -> ServerInfo:
         """Returns the server info of the server which is occupied least"""
-        least_used_other_server = min(self.server_view.values(), key=attrgetter('server_info.occupancy'), default=ServerState(self.server_info, 0)).server_info
+        if self.server_view:
+            return min(self.server_view.values(),key=lambda st: st.server_info.occupancy).server_info
 
-        return min(least_used_other_server, self.server_info, key=attrgetter('occupancy'))
+        return self.server_info
 
     def add_connection(self, username: str, conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
@@ -223,7 +276,7 @@ class ConnectionManager:
 
         # send login confirm
         player_state = self.server_loop.game_state_manager.get_player_state(username)
-        login_confirm = Packet(player_state, tag=PacketTag.LOGIN_CONFIRM)
+        login_confirm = Packet(player_state, tag=PacketTag.LOGIN_CONFIRM, server_uuid=UUID(self.server_loop.server_uuid).int)
         communicator.send(login_confirm)
 
         self.active_connections[username] = communicator
@@ -275,7 +328,7 @@ class ConnectionManager:
     def handle_broadcast(self, packet: Packet, address: Address) -> None:
         """Handles incoming login requests and establishes a new client communicator if the login is valid. Returns a response packet with the player's game state or None."""
         match packet.tag:
-            case PacketTag.GOSSIP_PLAYER_STATS | PacketTag.GOSSIP_MONSTER_SYNC:
+            case PacketTag.GOSSIP_PLAYER_STATS:
                 self.server_loop.handle_gossip_message(packet)
             case PacketTag.LOGIN:
                 self._handle_login(packet, address)
@@ -298,6 +351,7 @@ class ConnectionManager:
             else:
                 server_info = self._assign_client()
                 login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
+
             response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
             self.udp_socket.send_to(response, address, 2)
         except TypeError as e:

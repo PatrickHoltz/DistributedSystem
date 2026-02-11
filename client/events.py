@@ -42,3 +42,4 @@ class Events(StrEnum):
     ATTACK_CLICKED = "attack_clicked"
     NEW_MONSTER = "new_monster"
     SERVER_TIMEOUT = "server_timeout"
+    SWITCH_SERVER = "switch_server"
