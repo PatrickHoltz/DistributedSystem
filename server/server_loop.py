@@ -379,7 +379,7 @@ class ServerLoop:
             if not (self.coordinator_timer and self.coordinator_timer.is_alive()):
                 self.coordinator_timer = threading.Timer(self.BULLY_COORDINATOR_WAIT, self.on_coordinator_timeout)
                 self.coordinator_timer.start()
-                Debug.log("Coordinator timer started")
+                Debug.log("Coordinator timer started", "SERVER", "BULLY")
 
     def _handle_bully_election_message(self, packet: Packet, address: Address):
         candidate = packet.content["candidate_uuid"]
