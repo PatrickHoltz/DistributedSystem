@@ -377,10 +377,11 @@ class MulticasterProcess(Process):
                                 self._heartbeat_stamps[msg.sender_uuid] = (msg.heartbeat_id , time.monotonic())
                             
                             # validate if we have seen all of senders actual msgs
-                            tracker = self._received_tracker.get(msg.sender_uuid.hex, 0)
-                            if msg.msg_sequence_id > tracker:
-                                missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
-                                self._sender.send(missing_req, prio=True)
+                            if msg.sender_uuid.hex in self._received_tracker:
+                                tracker = self._received_tracker.get(msg.sender_uuid.hex, 0)
+                                if msg.msg_sequence_id > tracker:
+                                    missing_req = MulticastRequestMissingPacket(self.uuid, msg.sender_uuid, tracker)
+                                    self._sender.send(missing_req, prio=True)
             
             # send heartbeat if time and filter out due servers
             if time.monotonic() > self._next_heartbeat:
