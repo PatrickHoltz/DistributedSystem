@@ -78,6 +78,8 @@ class ServerLoop:
         
         self.multicaster = Multicaster(UUID(self.server_uuid), self._on_damage_multicast)
         self.damage_tracker = {}
+
+        self._last_server_view_empty = True
         self.last_overall_dmg = -1
         
         Debug.log(f"New server with UUID <{self.server_uuid}> started.",
@@ -123,6 +125,18 @@ class ServerLoop:
             self._send_outgoing_messages()
 
             self.connection_manager.tick_client_heartbeat(now)
+
+            current_empty = (len(self.connection_manager.server_view) == 0)
+
+            if self.is_leader:
+                if self._last_server_view_empty and not current_empty:
+                    self.connection_manager.redistribution_planned = False
+
+                if (not self.connection_manager.redistribution_planned) and self.connection_manager.server_view:
+                    self.connection_manager.plan_redistribute_clients(now)
+                    self.connection_manager.redistribution_planned = True
+
+            self.connection_manager.tick_switch_clients(now)
 
             time.sleep(max(0.0, self.tick_rate - (time.time() - start_time)))
 
@@ -547,6 +561,8 @@ class ServerLoop:
         if self.is_leader:
             # broadcast leader heartbeat
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.BULLY_HEARTBEAT_INTERVAL, broadcast_attempts=3)
+            self.connection_manager.redistribution_planned = False
+
         else:
             # udp heartbeat to leader
             self._heartbeat = Heartbeat(self.get_heartbeat_packet, self.SERVER_TO_LEADER_HEARTBEAT_INTERVAL, self.leader_info.ip, self.leader_info.udp_port)

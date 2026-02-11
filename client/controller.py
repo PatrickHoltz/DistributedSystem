@@ -27,7 +27,8 @@ class LoginService:
         login_data = LoginData(username)
         packet = Packet(login_data, tag=PacketTag.LOGIN)
         login_broadcast = BroadcastSocket(packet, self._handle_login_response,
-                                          lambda: self._handle_login_failure("Login failed. Server did not respond"))
+                                          lambda: self._handle_login_failure("Login failed. Server did not respond"),
+                                          send_attempts=10)
         login_broadcast.start()
 
     def _handle_login_response(self, packet: Packet, _address: tuple[str, int]):
@@ -96,6 +97,11 @@ class ConnectionService(TCPClientConnection):
                     # assume content is a simple string
                     self._client_game_state.monster.set_dead()
 
+                case PacketTag.SWITCH_SERVER:
+                    data = SwitchServerData(**packet.content)
+                    self.dispatcher.emit(Events.SWITCH_SERVER, data.ip, data.tcp_port, self._username)
+                    return
+
                 case _:
                     print(f"Unknown packet tag {packet.tag} received. Aborting packet.")
                     return
@@ -135,12 +141,9 @@ class ConnectionService(TCPClientConnection):
         self.server_timeout_timer.start()
 
     def _on_server_timeout_detected(self):
-        if self.is_alive():
-            Debug.log("Server inactivity detected. Trying to log in again.", "CLIENT")
-            self.dispatcher.emit(Events.SERVER_TIMEOUT, self._username)
-        else:
-            Debug.log("Login failed.")
-            self.dispatcher.emit(Events.LOGIN_FAILED)
+        Debug.log("Server inactivity detected. Trying to log in again.", "CLIENT")
+        self.stop()
+        self.dispatcher.emit(Events.SERVER_TIMEOUT, self._username)
 
     def stop(self):
         if self.server_timeout_timer:
@@ -157,6 +160,7 @@ class GameController:
         self._connection_service: Optional[ConnectionService] = None
         self.dispatcher.subscribe(Events.ATTACK_CLICKED, self.on_attack_clicked)
         self.dispatcher.subscribe(Events.LOGOUT_CLICKED, self.on_logout_clicked)
+        self.dispatcher.subscribe(Events.SWITCH_SERVER, self._on_switch_server)
 
     def on_logged_in(self, login_reply: LoginReplyData):
         if self._connection_service:
@@ -188,6 +192,12 @@ class GameController:
 
         self.client_game_state.player.logged_in = False
         self.dispatcher.emit(Events.LOGGED_OUT)
+
+    def _on_switch_server(self, ip: str, tcp_port: int, username: str):
+        if self._connection_service:
+            self._connection_service.stop()
+        reply = LoginReplyData(ip, tcp_port, username)
+        self.on_logged_in(reply)
 
     def shutdown_on_close(self):
         if self._connection_service:

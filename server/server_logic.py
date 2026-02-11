@@ -173,6 +173,7 @@ class ConnectionManager:
     CLIENT_HEARTBEAT_TIMEOUT = 6.0
     CLIENT_HEARTBEAT_INTERVAL = 2.0
 
+
     def __init__(self, server_loop: ServerLoop, server_uuid: str):
         self.active_connections: dict[str, ClientCommunicator] = {}
         self.last_seen: dict[str, float] = {}
@@ -181,6 +182,9 @@ class ConnectionManager:
         self.server_view: dict[str, ServerState] = {}
 
         self.server_loop: ServerLoop = server_loop
+
+        self._drop_after: dict[str, float] = {}
+        self.redistribution_planned = False
 
         # handles incoming broadcasts
         self.broadcast_listener = BroadcastListener(
@@ -206,11 +210,59 @@ class ConnectionManager:
         self.client_listener.start()
         self.udp_socket.start()
 
+    def _pick_other_server(self):
+        if not self.server_view:
+            return None
+        return min(self.server_view.values(), key=lambda st: st.server_info.occupancy).server_info
+
+    def plan_redistribute_clients(self, now: float):
+        """Plan to distribute clients"""
+        if not self.server_loop.is_leader:
+            return
+
+        if not self.server_view:
+            return
+
+        usernames = list(self.active_connections.keys())
+        if not usernames:
+            return
+
+        for username in usernames:
+            if username in self._drop_after:
+                continue
+
+            Debug.log(f"Sending all my clients away.")
+
+            target = self._pick_other_server()
+            if not target:
+                #if there are no other server
+                return
+
+            pkt = Packet(SwitchServerData(target.ip, target.tcp_port), tag=PacketTag.SWITCH_SERVER)
+            self.server_loop.out_queue.put((username, pkt))
+
+            #drop after 0.2 seconds
+            self._drop_after[username] = now
+
+    def tick_switch_clients(self, now: float):
+        if not self._drop_after:
+            return
+
+        due = [u for u, deadline in self._drop_after.items() if now >= deadline]
+        for username in due:
+            self._drop_after.pop(username, None)
+
+            # if already gone
+            if username in self.active_connections:
+                self.remove_connection(username)
+
+
     def _assign_client(self) -> ServerInfo:
         """Returns the server info of the server which is occupied least"""
-        least_used_other_server = min(self.server_view.values(), key=attrgetter('server_info.occupancy'), default=ServerState(self.server_info, 0)).server_info
+        if self.server_view:
+            return min(self.server_view.values(),key=lambda st: st.server_info.occupancy).server_info
 
-        return min(least_used_other_server, self.server_info, key=attrgetter('occupancy'))
+        return self.server_info
 
     def add_connection(self, username: str, conn_socket: socket.socket) -> int:
         """Adds a new active connection and registers it in the game state manager.
@@ -298,6 +350,7 @@ class ConnectionManager:
             else:
                 server_info = self._assign_client()
                 login_reply = LoginReplyData(server_info.ip, server_info.tcp_port, login_data.username)
+
             response = Packet(login_reply, tag=PacketTag.LOGIN_REPLY)
             self.udp_socket.send_to(response, address, 2)
         except TypeError as e:
